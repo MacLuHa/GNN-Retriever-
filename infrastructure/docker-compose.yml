@@ -1,0 +1,120 @@
+version: '3.8'
+
+services:
+  elasticsearch:
+    image: ${ES_IMAGE}
+    container_name: ${ES_CONTAINER_NAME}
+    environment:
+      - node.name=${ES_CONTAINER_NAME}
+      - cluster.name=es-docker-cluster
+      - discovery.type=${ES_DISCOVERY_TYPE}
+      - bootstrap.memory_lock=true
+      - "ES_JAVA_OPTS=-Xms${ES_HEAP_SIZE} -Xmx${ES_HEAP_SIZE}"
+      - xpack.security.enabled=${ES_XPACK_SECURITY_ENABLED}
+      - xpack.security.enrollment.enabled=${ES_XPACK_SECURITY_ENROLLMENT_ENABLED}
+      - xpack.security.http.ssl.enabled=${ES_XPACK_SECURITY_HTTP_SSL_ENABLED}
+      - xpack.security.transport.ssl.enabled=${ES_XPACK_SECURITY_TRANSPORT_SSL_ENABLED}
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    ports:
+      - "${ES_PORT}:9200"
+      - "${ES_TRANSPORT_PORT}:9300"
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  neo4j:
+    image: neo4j:5
+    container_name: neo4j
+    environment:
+      - NEO4J_AUTH=neo4j/password
+      - NEO4J_dbms_memory_heap_initial__size=512M
+      - NEO4J_dbms_memory_heap_max__size=512M
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  kafka:
+    image: ${KAFKA_IMAGE}
+    container_name: ${KAFKA_CONTAINER_NAME}
+    environment:
+      - KAFKA_NODE_ID=${KAFKA_NODE_ID}
+      - KAFKA_PROCESS_ROLES=broker,controller
+      - KAFKA_CONTROLLER_QUORUM_VOTERS=${KAFKA_NODE_ID}@${KAFKA_CONTAINER_NAME}:${KAFKA_CONTROLLER_PORT}
+      - KAFKA_CLUSTER_ID=${KAFKA_CLUSTER_ID}
+
+      - KAFKA_LISTENERS=EXTERNAL://0.0.0.0:${KAFKA_EXTERNAL_PORT},INTERNAL://0.0.0.0:${KAFKA_INTERNAL_PORT},CONTROLLER://0.0.0.0:${KAFKA_CONTROLLER_PORT}
+      - KAFKA_ADVERTISED_LISTENERS=EXTERNAL://${KAFKA_EXTERNAL_HOST}:${KAFKA_EXTERNAL_PORT},INTERNAL://${KAFKA_INTERNAL_HOST}:${KAFKA_INTERNAL_PORT}
+      
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=EXTERNAL:PLAINTEXT,INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      
+      - KAFKA_INTER_BROKER_LISTENER_NAME=INTERNAL
+      - KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
+
+      - KAFKA_AUTO_CREATE_TOPICS_ENABLE=true
+
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1
+      - KAFKA_DEFAULT_REPLICATION_FACTOR=1
+    ports:
+      - "${KAFKA_EXTERNAL_PORT}:${KAFKA_EXTERNAL_PORT}" 
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    networks:
+      - app-network
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server 127.0.0.1:${KAFKA_EXTERNAL_PORT} || exit 1",
+        ]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 40s
+    restart: unless-stopped
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    environment:
+      - KAFKA_CLUSTERS_0_NAME=local-cluster
+      - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=${KAFKA_CONTAINER_NAME}:${KAFKA_INTERNAL_PORT}
+      - DYNAMIC_CONFIG_ENABLED=true
+    ports:
+      - "8080:8080"
+    networks:
+      - app-network
+    depends_on:
+      - kafka
+    restart: unless-stopped
+
+volumes:
+  es_data:
+  neo4j_data:
+  neo4j_logs:
+  kafka_data:
+
+networks:
+  app-network:
+    driver: bridge
