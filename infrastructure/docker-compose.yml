@@ -108,12 +108,43 @@ services:
     depends_on:
       - kafka
     restart: unless-stopped
+  
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./ollama_data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+  
+  qdrant:
+    image: qdrant/qdrant:v1.16
+    container_name: qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"  # HTTP API
+      - "6334:6334"  # gRPC
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__ENABLE_TLS=false
+      - QDRANT__STORAGE__SNAPSHOT_INTERVAL=30
+      - QDRANT__STORAGE__PERFORMANCE__MAX_SEARCH_THREADS=8
 
 volumes:
   es_data:
   neo4j_data:
   neo4j_logs:
   kafka_data:
+  qdrant_data:
 
 networks:
   app-network:
