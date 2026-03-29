@@ -105,12 +105,12 @@ class ChunkVectorizeService:
             logger.exception("Invalid vectorize message payload")
             return
 
-        vector = await self._embedder.embed(message.text)
-        vector_id = await self._qdrant_store.upsert_vector(message, vector)
-        await self._publish_graph_event(message, vector_id)
-        logger.info("Chunk vectorized chunk_id=%s vector_id=%s", message.chunk_id, vector_id)
+        embedding = await self._embedder.embed(message.text)
+        embedding_id = await self._qdrant_store.upsert_vector(message, embedding)
+        await self._publish_graph_event(message, embedding_id)
+        logger.info("Chunk vectorized chunk_id=%s embedding_id=%s", message.chunk_id, embedding_id)
 
-    async def _publish_graph_event(self, message: VectorizeMessage, vector_id: str) -> None:
+    async def _publish_graph_event(self, message: VectorizeMessage, embedding_id: str) -> None:
         """Публикует событие следующего шага в topic documents.graph."""
         trace_id = str(uuid.uuid4())
         value = GraphMessage(
@@ -118,7 +118,7 @@ class ChunkVectorizeService:
             chunk_id=message.chunk_id,
             version_id=message.version_id,
             es_doc_id=message.es_doc_id,
-            vectorId=vector_id,
+            embedding_id=embedding_id,
         ).model_dump(mode="json")
         kafka_headers = [("trace_id", trace_id.encode("utf-8"))]
         await self._producer.send_and_wait(

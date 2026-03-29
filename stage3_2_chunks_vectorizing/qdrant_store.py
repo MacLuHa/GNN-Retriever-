@@ -37,7 +37,7 @@ class QdrantStore:
             raise ValueError("Vector must not be empty")
 
         await self._ensure_collection(len(vector))
-        vector_id = self._build_vector_id(message)
+        embedding_id = self._build_embedding_id(message)
 
         payload: dict[str, Any] = {
             "doc_id": message.doc_id,
@@ -45,14 +45,14 @@ class QdrantStore:
             "version_id": message.version_id,
             "es_doc_id": message.es_doc_id,
         }
-        point = models.PointStruct(id=vector_id, vector=vector, payload=payload)
+        point = models.PointStruct(id=embedding_id, vector=vector, payload=payload)
         await self._run_with_retry(
             self._client.upsert,
             collection_name=self._config.collection_name,
             points=[point],
             wait=True,
         )
-        return vector_id
+        return embedding_id
 
     async def _ensure_collection(self, vector_size: int) -> None:
         """Создаёт коллекцию при необходимости и проверяет размерность."""
@@ -112,7 +112,7 @@ class QdrantStore:
         raise RuntimeError("Qdrant operation failed after retries") from last_error
 
     @staticmethod
-    def _build_vector_id(message: VectorizeMessage) -> str:
+    def _build_embedding_id(message: VectorizeMessage) -> str:
         """Строит стабильный идентификатор вектора."""
         seed = f"{message.chunk_id}:{message.version_id}"
         return str(uuid.uuid5(uuid.NAMESPACE_URL, seed))

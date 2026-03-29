@@ -20,4 +20,4 @@ class GraphMessage(BaseModel):
     chunk_id: str
     version_id: str
     es_doc_id: str
-    vectorId: str
+    embedding_id: str
