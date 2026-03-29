@@ -155,7 +155,7 @@ class GraphKnowledgeService:
         try:
             entity_ids = await self._graph_store.apply_extraction(
                 extraction,
-                embedding_id=message.embedding_id,
+                message=message,
             )
         except Exception as exc:
             logger.exception("Neo4j write failed chunk_id=%s", message.chunk_id)
