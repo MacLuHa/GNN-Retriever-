@@ -7,13 +7,13 @@ from neo4j import AsyncGraphDatabase, AsyncDriver
 
 from .config import Neo4jConfig
 from .entity_ids import make_entity_id, normalize_entity_name
-from .models import EntityExtractionResult
+from .models import EntityExtractionResult, GraphMessage
 
 logger = logging.getLogger("stage3_3_graph_knowledge_base")
 
 
 class Neo4jGraphStore:
-    """Запись узлов Entity и рёбер RELATED_TO."""
+    """Запись Chunk (провенанс чанка), Entity, рёбер MENTIONS и RELATED_TO."""
 
     def __init__(self, config: Neo4jConfig) -> None:
         self._config = config
@@ -26,22 +26,24 @@ class Neo4jGraphStore:
         await self._driver.close()
 
     async def ensure_schema(self) -> None:
-        """Уникальность entity_id для MERGE."""
-        q = (
+        """Уникальность chunk_id и entity_id для MERGE."""
+        statements = (
+            "CREATE CONSTRAINT chunk_id_unique IF NOT EXISTS "
+            "FOR (c:Chunk) REQUIRE c.chunk_id IS UNIQUE",
             "CREATE CONSTRAINT entity_id_unique IF NOT EXISTS "
-            "FOR (e:Entity) REQUIRE e.entity_id IS UNIQUE"
+            "FOR (e:Entity) REQUIRE e.entity_id IS UNIQUE",
         )
         async with self._driver.session(database=self._config.database) as session:
-            res = await session.run(q)
-            await res.consume()
-        logger.info("Neo4j schema ensured (Entity.entity_id unique)")
+            for q in statements:
+                res = await session.run(q)
+                await res.consume()
+        logger.info("Neo4j schema ensured (Chunk.chunk_id, Entity.entity_id unique)")
 
     def _collect_rows(
         self,
         extraction: EntityExtractionResult,
-        embedding_id: str,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        """Строки для UNWIND и список рёбер по id."""
+        """Строки для UNWIND (Entity) и список рёбер RELATED_TO по id."""
         names: dict[str, str] = {}
         for ent in extraction.entities:
             key = normalize_entity_name(ent.name)
@@ -58,13 +60,7 @@ class Neo4jGraphStore:
         for key, display in names.items():
             eid = make_entity_id(display)
             key_to_id[key] = eid
-            rows.append(
-                {
-                    "id": eid,
-                    "name": display,
-                    "embedding_id": embedding_id,
-                }
-            )
+            rows.append({"id": eid, "name": display})
 
         rel_rows: list[dict[str, Any]] = []
         for rel in extraction.relations:
@@ -84,13 +80,13 @@ class Neo4jGraphStore:
         self,
         extraction: EntityExtractionResult,
         *,
-        embedding_id: str,
+        message: GraphMessage,
     ) -> list[str]:
-        """MERGE сущностей и рёбер RELATED_TO для одного чанка.
+        """MERGE Chunk, Entity, (:Chunk)-[:MENTIONS]->(:Entity) и RELATED_TO между сущностями.
 
-        Возвращает список ``entity_id`` записанных узлов (порядок соответствует обходу).
+        Возвращает список ``entity_id`` для этого чанка (порядок соответствует обходу).
         """
-        rows, rel_rows = self._collect_rows(extraction, embedding_id)
+        rows, rel_rows = self._collect_rows(extraction)
         if not rows:
             logger.info("No entities to write")
             return []
@@ -98,14 +94,24 @@ class Neo4jGraphStore:
         async with self._driver.session(database=self._config.database) as session:
             res = await session.run(
                 """
+                MERGE (c:Chunk {chunk_id: $chunk_id})
+                SET
+                  c.doc_id = $doc_id,
+                  c.version_id = $version_id,
+                  c.es_doc_id = $es_doc_id,
+                  c.embedding_id = $embedding_id
+                WITH c
                 UNWIND $rows AS row
                 MERGE (e:Entity {entity_id: row.id})
-                ON CREATE SET
-                  e.entity_name = row.name,
-                  e.embedding_id = row.embedding_id
-                ON MATCH SET
-                  e.embedding_id = row.embedding_id
+                ON CREATE SET e.entity_name = row.name
+                ON MATCH SET e.entity_name = row.name
+                MERGE (c)-[:MENTIONS]->(e)
                 """,
+                chunk_id=message.chunk_id,
+                doc_id=message.doc_id,
+                version_id=message.version_id,
+                es_doc_id=message.es_doc_id,
+                embedding_id=message.embedding_id,
                 rows=rows,
             )
             await res.consume()
