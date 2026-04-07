@@ -4,6 +4,10 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .entity_ids import normalize_entity_name
+
+_MIN_ENTITY_NAME_LEN = 3
+
 
 class GraphMessage(BaseModel):
     """Вход из топика documents.graph (после векторизации чанка)."""
@@ -116,8 +120,26 @@ class EntityExtractionResult(BaseModel):
         for item in raw:
             if isinstance(item, str):
                 s = item.strip()
-                if s:
+                if len(s) >= _MIN_ENTITY_NAME_LEN:
                     normalized.append({"name": s})
             elif isinstance(item, dict):
                 normalized.append(item)
         return {**data, "entities": normalized}
+
+    @model_validator(mode="after")
+    def drop_entities_shorter_than_min(self) -> EntityExtractionResult:
+        """Имя сущности не короче ``_MIN_ENTITY_NAME_LEN`` символов (после strip)."""
+        kept = [e for e in self.entities if len(e.name.strip()) >= _MIN_ENTITY_NAME_LEN]
+        return self.model_copy(update={"entities": kept})
+
+    @model_validator(mode="after")
+    def relations_only_between_listed_entities(self) -> EntityExtractionResult:
+        """Оставляет только связи, у которых оба конца есть в ``entities`` (по нормализованному имени)."""
+        keys = {normalize_entity_name(e.name) for e in self.entities}
+        keys.discard("")
+        filtered = [
+            r
+            for r in self.relations
+            if normalize_entity_name(r.from_name) in keys and normalize_entity_name(r.to_name) in keys
+        ]
+        return self.model_copy(update={"relations": filtered})

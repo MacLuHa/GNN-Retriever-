@@ -14,8 +14,8 @@ from .models import EntityExtractionResult
 logger = logging.getLogger("stage3_3_graph_knowledge_base")
 
 _SYSTEM = (
-    "You extract entities and directed relationships from the given text only. "
-    "Output a single JSON object. No markdown, no commentary, no external knowledge."
+    "Extract entities and directed relationships strictly from the user text. "
+    "Return one JSON object only; no markdown or prose."
 )
 
 _USER_TEMPLATE = """From the text below, extract (1) entities and (2) directed relationship pairs for a knowledge graph.
@@ -23,11 +23,10 @@ Use only information stated in the text; do not infer facts from general knowled
 
 Return exactly one JSON object with this shape (keys and nesting must match):
 {{"entities": [{{"name": "..."}}], "relations": [{{"from": "...", "to": "..."}}]}}
+The "entities" array may use plain strings instead of objects, e.g. ["Acme Corp", "Paris"] — each string is one entity name.
 
 Entities:
-- Include named entities, technical terms, organizations, laws, locations, and other concepts that matter for understanding the excerpt.
-- Prefer specific, unambiguous names; avoid vague labels unless the text uses them.
-- Cover useful levels of detail when the text supports both general and specific concepts; merge near-duplicates into one canonical name used consistently below.
+- Include proper names (people, organizations, locations) and other concepts that matter in the excerpt: laws, regulations, key technical or domain terms, events, or roles when they are clearly referenced as distinct things in the text.
 
 Relations:
 - Each relation is directed: "from" and "to" must be entity names that also appear in "entities" (same spelling).
@@ -62,6 +61,10 @@ class OllamaEntityExtractor:
             raise ValueError("Chunk text must not be empty")
 
         user_content = _USER_TEMPLATE.format(text=text)
+        options: dict[str, Any] = {"temperature": 0.0, "top_p": 1.0}
+        if self._config.num_predict is not None:
+            options["num_predict"] = self._config.num_predict
+
         last_error: Exception | None = None
         for attempt in range(1, self._config.max_attempts + 1):
             try:
@@ -77,6 +80,7 @@ class OllamaEntityExtractor:
                             ],
                             "format": "json",
                             "stream": False,
+                            "options": options,
                         },
                     )
                     response.raise_for_status()

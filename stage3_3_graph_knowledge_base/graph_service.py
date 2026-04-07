@@ -129,6 +129,7 @@ class GraphKnowledgeService:
             index_name=self._config.elasticsearch.index_name,
             es_doc_id=message.es_doc_id,
         )
+        print("\nText: ", text)
         if text is None:
             await self._publish_dlq(
                 GraphDlqMessage.from_graph_message(
@@ -141,6 +142,7 @@ class GraphKnowledgeService:
 
         try:
             extraction = await self._extractor.extract(text)
+            print("\nExtraction: ", extraction)
         except Exception as exc:
             logger.exception("Entity extraction failed chunk_id=%s", message.chunk_id)
             await self._publish_dlq(
