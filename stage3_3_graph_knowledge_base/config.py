@@ -77,6 +77,7 @@ class OllamaLlmConfig(BaseSettings):
     model_name: str = Field(default="qwen3:14b", validation_alias="OLLAMA_LLM_MODEL")
     timeout_sec: float = Field(default=120.0, validation_alias="OLLAMA_LLM_TIMEOUT_SEC")
     max_attempts: int = Field(default=3, validation_alias="OLLAMA_LLM_MAX_ATTEMPTS")
+    num_predict: int | None = Field(default=None, validation_alias="OLLAMA_LLM_NUM_PREDICT")
 
 
 class RuntimeConfig(BaseSettings):
@@ -92,6 +93,20 @@ class RuntimeConfig(BaseSettings):
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
 
 
+class EntityNormalizationConfig(BaseSettings):
+    """Нормализация имён сущностей (лемматизация simplemma)."""
+
+    model_config = SettingsConfigDict(
+        env_file=_ENV_FILE,
+        env_file_encoding="utf-8",
+        extra="ignore",
+        populate_by_name=True,
+    )
+
+    lemma_lang: str = Field(default="en", validation_alias="ENTITY_LEMMATIZE_LANG")
+    lemma_scope: str = Field(default="single", validation_alias="ENTITY_LEMMATIZE_SCOPE")
+
+
 @dataclass(frozen=True)
 class AppConfig:
     """Сводная конфигурация."""
@@ -100,6 +115,7 @@ class AppConfig:
     elasticsearch: ElasticsearchConfig
     neo4j: Neo4jConfig
     ollama_llm: OllamaLlmConfig
+    entity_normalization: EntityNormalizationConfig
     runtime: RuntimeConfig
 
 
@@ -110,5 +126,6 @@ def load_config() -> AppConfig:
         elasticsearch=ElasticsearchConfig(),
         neo4j=Neo4jConfig(),
         ollama_llm=OllamaLlmConfig(),
+        entity_normalization=EntityNormalizationConfig(),
         runtime=RuntimeConfig(),
     )
