@@ -1,0 +1,3 @@
+[submodule "services/open-webui"]
+	path = services/open-webui
+	url = git@github.com:skorogod/open-webui.git
