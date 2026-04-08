@@ -78,17 +78,17 @@ Notebook подключается к Neo4j и проверяет:
 
 ## 4.3 Фичи узлов
 
-Сейчас используется `HashingVectorizer`:
-- из текста `Chunk` строится вектор `chunk_x`,
-- из текста `Entity` строится вектор `entity_x`.
+Сейчас notebook использует **готовые вектора из Qdrant** по `embedding_id`:
+- для `Chunk` берётся `c.embedding_id` из Neo4j и ищется в коллекции `QDRANT_CHUNK_COLLECTION`,
+- для `Entity` берётся `e.embedding_id` (fallback на `entity_id`) и ищется в `QDRANT_ENTITY_COLLECTION`.
 
-Это baseline-решение:
-- просто и быстро,
-- не требует скачивания тяжёлых моделей,
-- подходит для запуска «здесь и сейчас».
+Дальше:
+1. векторы загружаются батчами через `scroll` и фильтр по полю `embedding_id`,
+2. узлы без найденного вектора отфильтровываются,
+3. входные матрицы `chunk_x` и `entity_x` L2-нормализуются.
 
-Минус:
-- качество обычно ниже, чем у современных transformer-эмбеддингов.
+Плюс такого подхода:
+- GNN обучается не с нуля на bag-of-words, а на уже сильных dense-эмбеддингах из retrieval-контура.
 
 ## 4.4 Сборка графа для PyTorch Geometric
 
@@ -214,7 +214,7 @@ RETURN
 
 ## 7. Типичные ограничения текущего notebook
 
-1. Используется `HashingVectorizer` (baseline), без языковой модели.
+1. Качество теперь напрямую зависит от качества и консистентности векторов в Qdrant (модель/версия/размерность).
 2. Negative sampling — случайный, без hard negatives.
 3. Нет отдельного обучения query encoder.
 4. Оценка только на link prediction proxy, а не на полном e2e retrieval benchmark.
@@ -223,7 +223,7 @@ RETURN
 
 ## 8. Что улучшать следующим шагом
 
-1. Заменить baseline-фичи на transformer-эмбеддинги (`Chunk`/`Entity`).
+1. Добавить строгую проверку консистентности Qdrant-векторов (`embedding_model`, `embedding_version`) перед обучением.
 2. Добавить hard negative sampling (близкие, но нерелевантные сущности).
 3. Дообучить отдельный `query -> entity` энкодер.
 4. Добавить полноценную offline-оценку retrieval (`Recall@K` по query->chunk).
