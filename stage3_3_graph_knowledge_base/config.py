@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _ENV_FILE = Path(__file__).resolve().parent / ".env"
@@ -80,6 +80,57 @@ class OllamaLlmConfig(BaseSettings):
     num_predict: int | None = Field(default=None, validation_alias="OLLAMA_LLM_NUM_PREDICT")
 
 
+class OllamaEmbeddingConfig(BaseSettings):
+    """Ollama: генерация embedding для сущностей."""
+
+    model_config = SettingsConfigDict(
+        env_file=_ENV_FILE,
+        env_file_encoding="utf-8",
+        extra="ignore",
+        populate_by_name=True,
+    )
+
+    embedding_dim: int = Field(
+        default=256,
+        validation_alias=AliasChoices("ENTITY_EMBEDDING_DIM", "EMBEDDING_DIM"),
+    )
+    base_url: str = Field(
+        default="http://localhost:11434",
+        validation_alias=AliasChoices("ENTITY_OLLAMA_BASE_URL", "OLLAMA_BASE_URL"),
+    )
+    model_name: str = Field(
+        default="qwen3-embedding:0.6b",
+        validation_alias=AliasChoices("ENTITY_OLLAMA_MODEL", "OLLAMA_MODEL"),
+    )
+    timeout_sec: float = Field(default=30.0, validation_alias="ENTITY_OLLAMA_TIMEOUT_SEC")
+    max_attempts: int = Field(default=3, validation_alias="ENTITY_OLLAMA_MAX_ATTEMPTS")
+
+
+class QdrantConfig(BaseSettings):
+    """Qdrant: коллекция векторов сущностей."""
+
+    model_config = SettingsConfigDict(
+        env_file=_ENV_FILE,
+        env_file_encoding="utf-8",
+        extra="ignore",
+        populate_by_name=True,
+    )
+
+    url: str = Field(
+        default="http://localhost:6333",
+        validation_alias=AliasChoices("ENTITY_QDRANT_URL", "QDRANT_URL"),
+    )
+    collection_name: str = Field(
+        default="legal_entities_vectors",
+        validation_alias=AliasChoices("ENTITY_QDRANT_COLLECTION", "QDRANT_ENTITY_COLLECTION"),
+    )
+    distance: str = Field(
+        default="Cosine",
+        validation_alias=AliasChoices("ENTITY_QDRANT_DISTANCE", "QDRANT_DISTANCE"),
+    )
+    max_attempts: int = Field(default=3, validation_alias="ENTITY_QDRANT_MAX_ATTEMPTS")
+
+
 class RuntimeConfig(BaseSettings):
     """Логирование."""
 
@@ -115,6 +166,8 @@ class AppConfig:
     elasticsearch: ElasticsearchConfig
     neo4j: Neo4jConfig
     ollama_llm: OllamaLlmConfig
+    ollama_embedding: OllamaEmbeddingConfig
+    qdrant: QdrantConfig
     entity_normalization: EntityNormalizationConfig
     runtime: RuntimeConfig
 
@@ -126,6 +179,8 @@ def load_config() -> AppConfig:
         elasticsearch=ElasticsearchConfig(),
         neo4j=Neo4jConfig(),
         ollama_llm=OllamaLlmConfig(),
+        ollama_embedding=OllamaEmbeddingConfig(),
+        qdrant=QdrantConfig(),
         entity_normalization=EntityNormalizationConfig(),
         runtime=RuntimeConfig(),
     )

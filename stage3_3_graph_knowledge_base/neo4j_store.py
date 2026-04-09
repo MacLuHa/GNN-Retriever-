@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
 from typing import Any
 
 from neo4j import AsyncGraphDatabase, AsyncDriver
 
 from .config import Neo4jConfig
 from .entity_ids import make_entity_id, normalize_entity_name
-from .models import EntityExtractionResult, GraphMessage
+from .models import EntityExtractionResult, GraphEntityNode, GraphMessage
 
 logger = logging.getLogger("stage3_3_graph_knowledge_base")
 
@@ -24,6 +25,48 @@ class Neo4jGraphStore:
 
     async def close(self) -> None:
         await self._driver.close()
+
+    async def iter_entities(self) -> AsyncIterator[GraphEntityNode]:
+        """Итерирует по всем сущностям, у которых есть непустое имя."""
+        async with self._driver.session(database=self._config.database) as session:
+            result = await session.run(
+                """
+                MATCH (e:Entity)
+                WHERE e.entity_name IS NOT NULL AND trim(e.entity_name) <> ""
+                RETURN
+                  e.entity_id AS entity_id,
+                  e.entity_name AS entity_name,
+                  e.embedding_id AS embedding_id
+                ORDER BY e.entity_id
+                """
+            )
+            async for record in result:
+                yield GraphEntityNode(
+                    entity_id=str(record["entity_id"]),
+                    entity_name=str(record["entity_name"]),
+                    embedding_id=(
+                        str(record["embedding_id"])
+                        if record["embedding_id"] is not None
+                        else None
+                    ),
+                )
+            await result.consume()
+
+    async def set_entity_embedding_id(self, entity_id: str, embedding_id: str) -> None:
+        """Сохраняет ссылку на вектор сущности в Neo4j."""
+        async with self._driver.session(database=self._config.database) as session:
+            result = await session.run(
+                """
+                MATCH (e:Entity {entity_id: $entity_id})
+                SET e.embedding_id = $embedding_id
+                RETURN e.entity_id AS entity_id
+                """,
+                entity_id=entity_id,
+                embedding_id=embedding_id,
+            )
+            record = await result.single()
+            if record is None:
+                raise ValueError(f"Entity not found for entity_id={entity_id}")
 
     async def ensure_schema(self) -> None:
         """Уникальность chunk_id и entity_id для MERGE."""

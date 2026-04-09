@@ -6,8 +6,9 @@ from dataclasses import dataclass
 from aiokafka import AIOKafkaProducer
 from qdrant_client import AsyncQdrantClient
 
+from shared.ollama_embedder import OllamaEmbedder
+
 from .config import AppConfig, load_config
-from .ollama_embedder import OllamaEmbedder
 from .qdrant_store import QdrantStore
 from .vectorize_service import ChunkVectorizeService
 
@@ -34,7 +35,12 @@ async def build_app(config: AppConfig | None = None) -> AppContext:
     await producer.start()
 
     qdrant_client = AsyncQdrantClient(url=cfg.qdrant.url)
-    embedder = OllamaEmbedder(cfg.ollama)
+    embedder = OllamaEmbedder(
+        cfg.ollama,
+        logger_name="stage3_2_chunks_vectorizing",
+        log_prefix="Embedding",
+        error_prefix="embedding",
+    )
     qdrant_store = QdrantStore(qdrant_client, cfg.qdrant)
     service = ChunkVectorizeService(cfg, embedder, qdrant_store, producer)
 
