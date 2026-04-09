@@ -9,9 +9,10 @@ from typing import Any
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 from aiokafka.errors import GroupCoordinatorNotAvailableError, NodeNotReadyError
 
+from shared.ollama_embedder import OllamaEmbedder
+
 from .config import AppConfig
 from .models import GraphMessage, VectorizeMessage
-from .ollama_embedder import OllamaEmbedder
 from .qdrant_store import QdrantStore
 
 logger = logging.getLogger("stage3_2_chunks_vectorizing")

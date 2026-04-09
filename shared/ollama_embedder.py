@@ -3,24 +3,39 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+from typing import Protocol
 
 import httpx
 
-from .config import OllamaConfig
 
-logger = logging.getLogger("stage3_2_chunks_vectorizing")
+class OllamaEmbeddingConfigLike(Protocol):
+    """Минимальный интерфейс конфига для генерации embedding."""
+
+    base_url: str
+    model_name: str
+    timeout_sec: float
+    max_attempts: int
+    embedding_dim: int
 
 
 class OllamaEmbedder:
     """Генерирует embedding через Ollama."""
 
-    def __init__(self, config: OllamaConfig) -> None:
-        """Инициализирует клиент генерации embedding."""
+    def __init__(
+        self,
+        config: OllamaEmbeddingConfigLike,
+        *,
+        logger_name: str = "ollama_embedder",
+        log_prefix: str = "Embedding",
+        error_prefix: str = "embedding",
+    ) -> None:
         self._config = config
+        self._logger = logging.getLogger(logger_name)
+        self._log_prefix = log_prefix
+        self._error_prefix = error_prefix
 
     @staticmethod
     def _cosine_similarity(left: list[float], right: list[float]) -> float:
-        """Вычисляет косинусную близость между двумя векторами."""
         if not left or not right:
             raise ValueError("Vectors for cosine similarity must not be empty")
 
@@ -47,44 +62,36 @@ class OllamaEmbedder:
                 async with httpx.AsyncClient(base_url=self._config.base_url, timeout=timeout) as client:
                     truncated_response = await client.post(
                         "/api/embed",
-                        json={"model": self._config.model_name, "input": text, "truncate": True, "dimensions": self._config.embedding_dim},
+                        json={
+                            "model": self._config.model_name,
+                            "input": text,
+                            "truncate": True,
+                            "dimensions": self._config.embedding_dim,
+                        },
                     )
                     full_response = await client.post(
                         "/api/embed",
-                        json={"model": self._config.model_name, "input": text, "truncate": False},
+                        json={
+                            "model": self._config.model_name,
+                            "input": text,
+                            "truncate": False,
+                        },
                     )
 
                     truncated_response.raise_for_status()
-                    full_response.raise_for_status()
 
                     truncated_payload = truncated_response.json()
-                    full_payload = full_response.json()
+                    
                     truncated_embeddings = truncated_payload.get("embeddings")
-                    full_embeddings = full_payload.get("embeddings")
-                    if (
-                        not truncated_embeddings
-                        or not isinstance(truncated_embeddings, list)
-                        or len(truncated_embeddings) == 0
-                    ):
-                        raise ValueError("Ollama returned empty embeddings")
-                    if not full_embeddings or not isinstance(full_embeddings, list) or len(full_embeddings) == 0:
-                        raise ValueError("Ollama returned empty full embeddings")
-
+                    
                     truncated_embedding = truncated_embeddings[0]
-                    full_embedding = full_embeddings[0]
-
-                    similarity = self._cosine_similarity(truncated_embedding, full_embedding)
-                    logger.info(
-                        "Embedding similarity truncated_vs_full=%.6f dims=%s full_dims=%s",
-                        similarity,
-                        len(truncated_embedding),
-                        len(full_embedding),
-                    )
+                   
                     return truncated_embedding
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 last_error = exc
-                logger.warning(
-                    "Embedding request failed attempt=%s/%s: %s",
+                self._logger.warning(
+                    "%s request failed attempt=%s/%s: %s",
+                    self._log_prefix,
                     attempt,
                     self._config.max_attempts,
                     exc,
@@ -92,4 +99,4 @@ class OllamaEmbedder:
                 if attempt < self._config.max_attempts:
                     await asyncio.sleep(min(2**attempt, 5))
 
-        raise RuntimeError("Failed to get embedding from Ollama") from last_error
+        raise RuntimeError(f"Failed to get {self._error_prefix} from Ollama") from last_error

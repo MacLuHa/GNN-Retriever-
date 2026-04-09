@@ -30,6 +30,14 @@ class GraphEntityOutputMessage(BaseModel):
     entity_ids: list[str]
 
 
+class GraphEntityNode(BaseModel):
+    """Сущность, считанная из Neo4j для последующей векторизации."""
+
+    entity_id: str
+    entity_name: str
+    embedding_id: str | None = None
+
+
 class GraphDlqMessage(BaseModel):
     """Сообщение в DLQ при ошибке обработки или отсутствии сущностей."""
 

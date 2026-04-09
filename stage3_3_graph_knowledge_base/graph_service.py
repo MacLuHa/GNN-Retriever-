@@ -11,8 +11,16 @@ from aiokafka.errors import GroupCoordinatorNotAvailableError, NodeNotReadyError
 from elasticsearch import AsyncElasticsearch
 
 from .config import AppConfig
+from .entity_embedding_service import EntityEmbeddingService
+from .entity_ids import make_entity_id
 from .es_chunk_fetcher import fetch_chunk_text
-from .models import GraphDlqMessage, GraphEntityOutputMessage, GraphMessage
+from .models import (
+    EntityExtractionResult,
+    GraphDlqMessage,
+    GraphEntityNode,
+    GraphEntityOutputMessage,
+    GraphMessage,
+)
 from .neo4j_store import Neo4jGraphStore
 from .ollama_entity_extractor import OllamaEntityExtractor
 
@@ -38,12 +46,14 @@ class GraphKnowledgeService:
         es_client: AsyncElasticsearch,
         extractor: OllamaEntityExtractor,
         graph_store: Neo4jGraphStore,
+        entity_embedding_service: EntityEmbeddingService,
         producer: AIOKafkaProducer,
     ) -> None:
         self._config = config
         self._es_client = es_client
         self._extractor = extractor
         self._graph_store = graph_store
+        self._entity_embedding_service = entity_embedding_service
         self._producer = producer
 
     async def run_forever(self) -> None:
@@ -180,6 +190,21 @@ class GraphKnowledgeService:
             )
             return
 
+        try:
+            await self._entity_embedding_service.upsert_entities(
+                self._build_entities_for_embedding(extraction, entity_ids)
+            )
+        except Exception as exc:
+            logger.exception("Entity embedding write failed chunk_id=%s", message.chunk_id)
+            await self._publish_dlq(
+                GraphDlqMessage.from_graph_message(
+                    message,
+                    reason=_DLQ_GRAPH_WRITE_FAILED,
+                    detail=f"entity embedding write failed: {exc}",
+                )
+            )
+            return
+
         logger.info(
             "Graph updated chunk_id=%s entities=%s relations=%s",
             message.chunk_id,
@@ -187,6 +212,28 @@ class GraphKnowledgeService:
             len(extraction.relations),
         )
         await self._publish_chunk_entities_event(message, entity_ids)
+
+    @staticmethod
+    def _build_entities_for_embedding(
+        extraction: EntityExtractionResult,
+        entity_ids: list[str],
+    ) -> list[GraphEntityNode]:
+        """Собирает сущности текущего чанка для online-векторизации."""
+        names_by_id: dict[str, str] = {}
+        for ent in extraction.entities:
+            key = ent.name.strip()
+            if not key:
+                continue
+            # entity_ids формируются в том же порядке, что и уникальные сущности после нормализации.
+            # Здесь оставляем display-name из extraction, чтобы embedding строился по человекочитаемому имени.
+            entity_id = make_entity_id(key)
+            names_by_id.setdefault(entity_id, key)
+
+        return [
+            GraphEntityNode(entity_id=entity_id, entity_name=names_by_id[entity_id])
+            for entity_id in entity_ids
+            if entity_id in names_by_id
+        ]
 
     async def _publish_dlq(self, body: GraphDlqMessage) -> None:
         """Публикует запись в DLQ; при сбое отправки только логирует."""
