@@ -25,6 +25,7 @@ dependencies = [
   "simplemma>=1.1.0",
   "torch>=2.2.0",
   "sentence-transformers>=3.0.0",
+  "transformers>=5.5.3",
 ]
 
 [project.scripts]
@@ -33,6 +34,8 @@ stage3-chunks-indexing = "stage3_1_chunks_indexing.main:main"
 stage3-chunks-vectorizing = "stage3_2_chunks_vectorizing.main:main"
 stage3-graph-knowledge-base = "stage3_3_graph_knowledge_base.main:main"
 stage3-graph-entity-embeddings = "stage3_3_graph_knowledge_base.backfill.entity_embedding_main:main"
+stage3-graph-eval-extraction = "stage3_3_graph_knowledge_base.evaluate_extraction_modes:main"
+stage3-graph-replay-topic = "stage3_3_graph_knowledge_base.replay_graph_topic:main"
 stage7-retriever = "stage7_1_retriever.cli:main"
 retriever-api = "stage7_3_retriever_api.main:main"
 
