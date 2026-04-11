@@ -9,7 +9,7 @@ from typing import Any
 import httpx
 
 from .config import OllamaLlmConfig
-from .models import EntityExtractionResult
+from .models import EntityExtractionResult, RelationExtractionResult
 
 logger = logging.getLogger("stage3_3_graph_knowledge_base")
 
@@ -39,6 +39,27 @@ Text:
 ---
 """
 
+_RELATIONS_ONLY_TEMPLATE = """From the text below, extract directed relationship pairs for a knowledge graph.
+Use only information stated in the text; do not infer facts from general knowledge.
+
+You MUST use entity names only from this allowed list:
+{entities}
+
+Return exactly one JSON object with this shape:
+{{"relations": [{{"from": "...", "to": "..."}}]}}
+
+Rules:
+- Use only entity names from the allowed list with the same spelling.
+- Do not introduce new entities.
+- Add a pair only when the text clearly links two listed entities.
+- Use "relations": [] if none.
+
+Text:
+---
+{text}
+---
+"""
+
 
 def _parse_json_object(raw: str) -> dict[str, Any]:
     """Достаёт JSON из ответа модели (в т.ч. обёрнутого в ```json)."""
@@ -61,10 +82,32 @@ class OllamaEntityExtractor:
             raise ValueError("Chunk text must not be empty")
 
         user_content = _USER_TEMPLATE.format(text=text)
+        return await self._request_json(
+            user_content=user_content,
+            response_model=EntityExtractionResult,
+        )
+
+    async def extract_relations(self, text: str, entity_names: list[str]) -> RelationExtractionResult:
+        """Извлекает только связи между заранее заданными entity names."""
+        options: dict[str, Any] = {"temperature": 0.0, "top_p": 1.0}
+        if not text.strip():
+            raise ValueError("Chunk text must not be empty")
+        cleaned_entities = [name.strip() for name in entity_names if name.strip()]
+        if not cleaned_entities:
+            return RelationExtractionResult(relations=[])
+        user_content = _RELATIONS_ONLY_TEMPLATE.format(
+            text=text,
+            entities=json.dumps(cleaned_entities, ensure_ascii=False),
+        )
+        return await self._request_json(
+            user_content=user_content,
+            response_model=RelationExtractionResult,
+        )
+
+    async def _request_json(self, *, user_content: str, response_model: type[EntityExtractionResult] | type[RelationExtractionResult]):
         options: dict[str, Any] = {"temperature": 0.0, "top_p": 1.0}
         if self._config.num_predict is not None:
             options["num_predict"] = self._config.num_predict
-
         last_error: Exception | None = None
         for attempt in range(1, self._config.max_attempts + 1):
             try:
@@ -89,7 +132,7 @@ class OllamaEntityExtractor:
                     if not isinstance(raw_content, str):
                         raise ValueError("Ollama returned no message content")
                     data = _parse_json_object(raw_content)
-                    return EntityExtractionResult.model_validate(data)
+                    return response_model.model_validate(data)
             except Exception as exc:
                 last_error = exc
                 logger.warning(

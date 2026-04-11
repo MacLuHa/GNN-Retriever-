@@ -14,6 +14,7 @@ from .config import AppConfig
 from .entity_embedding_service import EntityEmbeddingService
 from .entity_ids import make_entity_id
 from .es_chunk_fetcher import fetch_chunk_text
+from .hybrid_extractor import HybridEntityExtractor
 from .models import (
     EntityExtractionResult,
     GraphDlqMessage,
@@ -22,7 +23,6 @@ from .models import (
     GraphMessage,
 )
 from .neo4j_store import Neo4jGraphStore
-from .ollama_entity_extractor import OllamaEntityExtractor
 
 logger = logging.getLogger("stage3_3_graph_knowledge_base")
 
@@ -44,7 +44,7 @@ class GraphKnowledgeService:
         self,
         config: AppConfig,
         es_client: AsyncElasticsearch,
-        extractor: OllamaEntityExtractor,
+        extractor: HybridEntityExtractor,
         graph_store: Neo4jGraphStore,
         entity_embedding_service: EntityEmbeddingService,
         producer: AIOKafkaProducer,
@@ -139,7 +139,6 @@ class GraphKnowledgeService:
             index_name=self._config.elasticsearch.index_name,
             es_doc_id=message.es_doc_id,
         )
-        print("\nText: ", text)
         if text is None:
             await self._publish_dlq(
                 GraphDlqMessage.from_graph_message(
@@ -151,8 +150,7 @@ class GraphKnowledgeService:
             return
 
         try:
-            extraction = await self._extractor.extract(text)
-            print("\nExtraction: ", extraction)
+            extraction, diagnostics = await self._extractor.extract(text)
         except Exception as exc:
             logger.exception("Entity extraction failed chunk_id=%s", message.chunk_id)
             await self._publish_dlq(
@@ -163,6 +161,23 @@ class GraphKnowledgeService:
                 )
             )
             return
+
+        if self._config.extraction.diagnostics_enabled:
+            logger.info(
+                (
+                    "Extraction diagnostics chunk_id=%s mode=%s "
+                    "llm_entities_raw=%s ner_entities_raw=%s merged_entities=%s "
+                    "relations=%s dropped_relations=%s overlap_entities=%s"
+                ),
+                message.chunk_id,
+                diagnostics.mode,
+                diagnostics.llm_entities_raw,
+                diagnostics.ner_entities_raw,
+                diagnostics.merged_entities,
+                diagnostics.relations,
+                diagnostics.dropped_relations,
+                diagnostics.overlap_entities,
+            )
 
         try:
             entity_ids = await self._graph_store.apply_extraction(

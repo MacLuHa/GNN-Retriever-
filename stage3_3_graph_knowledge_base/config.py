@@ -80,6 +80,47 @@ class OllamaLlmConfig(BaseSettings):
     num_predict: int | None = Field(default=None, validation_alias="OLLAMA_LLM_NUM_PREDICT")
 
 
+class ExtractionConfig(BaseSettings):
+    """Режим извлечения и параметры гибридного пайплайна."""
+
+    model_config = SettingsConfigDict(
+        env_file=_ENV_FILE,
+        env_file_encoding="utf-8",
+        extra="ignore",
+        populate_by_name=True,
+    )
+
+    mode: str = Field(default="llm_only", validation_alias="GRAPH_EXTRACTION_MODE")
+    relation_entity_limit: int = Field(default=64, validation_alias="GRAPH_RELATION_ENTITY_LIMIT")
+    diagnostics_enabled: bool = Field(default=True, validation_alias="GRAPH_EXTRACTION_DIAGNOSTICS")
+    quality_filter_enabled: bool = Field(default=True, validation_alias="GRAPH_ENTITY_QUALITY_FILTER")
+    max_entities_per_chunk: int = Field(default=24, validation_alias="GRAPH_MAX_ENTITIES_PER_CHUNK")
+    generic_entity_stopwords: str = Field(
+        default="state,system,group,people,society,government,movement,religion,empire,law",
+        validation_alias="GRAPH_GENERIC_ENTITY_STOPWORDS",
+    )
+
+
+class NerConfig(BaseSettings):
+    """Параметры NER-модели для пилотного извлечения кандидатов сущностей."""
+
+    model_config = SettingsConfigDict(
+        env_file=_ENV_FILE,
+        env_file_encoding="utf-8",
+        extra="ignore",
+        populate_by_name=True,
+    )
+
+    model_name: str = Field(
+        default="Jean-Baptiste/roberta-large-ner-english",
+        validation_alias="NER_MODEL_NAME",
+    )
+    device: int = Field(default=-1, validation_alias="NER_DEVICE")
+    min_score: float = Field(default=0.65, validation_alias="NER_MIN_SCORE")
+    max_entities: int = Field(default=64, validation_alias="NER_MAX_ENTITIES")
+    allowed_groups: str = Field(default="PER,ORG,LOC,MISC", validation_alias="NER_ALLOWED_GROUPS")
+
+
 class OllamaEmbeddingConfig(BaseSettings):
     """Ollama: генерация embedding для сущностей."""
 
@@ -166,6 +207,8 @@ class AppConfig:
     elasticsearch: ElasticsearchConfig
     neo4j: Neo4jConfig
     ollama_llm: OllamaLlmConfig
+    extraction: ExtractionConfig
+    ner: NerConfig
     ollama_embedding: OllamaEmbeddingConfig
     qdrant: QdrantConfig
     entity_normalization: EntityNormalizationConfig
@@ -179,6 +222,8 @@ def load_config() -> AppConfig:
         elasticsearch=ElasticsearchConfig(),
         neo4j=Neo4jConfig(),
         ollama_llm=OllamaLlmConfig(),
+        extraction=ExtractionConfig(),
+        ner=NerConfig(),
         ollama_embedding=OllamaEmbeddingConfig(),
         qdrant=QdrantConfig(),
         entity_normalization=EntityNormalizationConfig(),
