@@ -45,7 +45,7 @@ async def build_app(config: AppConfig | None = None) -> AppContext:
     graph_store = Neo4jGraphStore(cfg.neo4j)
     llm_extractor = OllamaEntityExtractor(cfg.ollama_llm)
     ner_extractor = None
-    if cfg.extraction.mode.strip().lower() == "ner_assisted":
+    if cfg.extraction.mode.strip().lower() in {"ner_assisted", "ner_only"}:
         ner_extractor = NerEntityExtractor(cfg.ner)
     extractor = HybridEntityExtractor(
         cfg.extraction,

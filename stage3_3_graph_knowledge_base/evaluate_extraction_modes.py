@@ -37,14 +37,22 @@ async def _evaluate_mode(
     chunk_ids: list[str],
     mode: str,
 ) -> dict[str, float]:
+    extraction_cfg = ExtractionConfig(
+        mode=mode,
+        relation_entity_limit=cfg.extraction.relation_entity_limit,
+        diagnostics_enabled=cfg.extraction.diagnostics_enabled,
+        quality_filter_enabled=cfg.extraction.quality_filter_enabled,
+        max_entities_per_chunk=cfg.extraction.max_entities_per_chunk,
+        generic_entity_stopwords=cfg.extraction.generic_entity_stopwords,
+    )
     extractor = HybridEntityExtractor(
-        ExtractionConfig(
-            mode=mode,
-            relation_entity_limit=cfg.extraction.relation_entity_limit,
-            diagnostics_enabled=cfg.extraction.diagnostics_enabled,
-        ),
+        extraction_cfg,
         OllamaEntityExtractor(cfg.ollama_llm),
-        ner_extractor=NerEntityExtractor(cfg.ner),
+        ner_extractor=(
+            NerEntityExtractor(cfg.ner)
+            if mode.strip().lower() in {"ner_assisted", "ner_only"}
+            else None
+        ),
     )
 
     diagnostics_rows = []
@@ -95,8 +103,9 @@ async def _async_main(limit: int) -> None:
     client = AsyncElasticsearch(hosts=[cfg.elasticsearch.url])
     try:
         chunk_ids = await _iter_chunk_ids(client, cfg, limit)
-        #llm_only = await _evaluate_mode(client=client, cfg=cfg, chunk_ids=chunk_ids, mode="llm_only")
+        llm_only = await _evaluate_mode(client=client, cfg=cfg, chunk_ids=chunk_ids, mode="llm_only")
         ner_assisted = await _evaluate_mode(client=client, cfg=cfg, chunk_ids=chunk_ids, mode="ner_assisted")
+        ner_only = await _evaluate_mode(client=client, cfg=cfg, chunk_ids=chunk_ids, mode="ner_only")
     finally:
         await client.close()
 
@@ -104,8 +113,9 @@ async def _async_main(limit: int) -> None:
         json.dumps(
             {
                 "sample_size": len(chunk_ids),
-                #"llm_only": llm_only,
+                "llm_only": llm_only,
                 "ner_assisted": ner_assisted,
+                "ner_only": ner_only,
             },
             ensure_ascii=False,
             indent=2,
@@ -114,7 +124,7 @@ async def _async_main(limit: int) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Compare llm_only vs ner_assisted extraction on ES chunks.")
+    parser = argparse.ArgumentParser(description="Compare llm_only, ner_assisted and ner_only extraction on ES chunks.")
     parser.add_argument("--limit", type=int, default=20, help="How many Elasticsearch chunks to sample")
     args = parser.parse_args()
 

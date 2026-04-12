@@ -4,7 +4,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 
-from transformers import pipeline
+from gliner import GLiNER
 
 from .config import NerConfig
 from .entity_ids import normalize_entity_name
@@ -32,17 +32,16 @@ class NerSpanSanity:
 
 
 class NerEntityExtractor:
-    """Извлечение candidate entities через token-classification pipeline."""
+    """Извлечение candidate entities через GLiNER с кастомными KG label'ами."""
 
     def __init__(self, config: NerConfig) -> None:
         self._config = config
-        allowed = [x.strip().upper() for x in config.allowed_groups.split(",") if x.strip()]
+        allowed = [x.strip().lower() for x in config.allowed_groups.split(",") if x.strip()]
         self._allowed_groups = set(allowed)
-        self._pipeline = pipeline(
-            "token-classification",
-            model=config.model_name,
-            aggregation_strategy="simple",
-            device=config.device,
+        map_location = "cuda" if config.device >= 0 else "cpu"
+        self._model = GLiNER.from_pretrained(
+            config.model_name,
+            map_location=map_location,
         )
 
     async def extract(self, text: str) -> list[NerCandidate]:
@@ -51,20 +50,24 @@ class NerEntityExtractor:
         return await asyncio.to_thread(self._extract_sync, text)
 
     def _extract_sync(self, text: str) -> list[NerCandidate]:
-        raw_items = self._pipeline(text)
+        raw_items = self._model.predict_entities(
+            text,
+            labels=list(self._allowed_groups),
+            threshold=self._config.min_score,
+        )
         candidates: list[NerCandidate] = []
         seen: set[str] = set()
 
         for item in raw_items:
             if not isinstance(item, dict):
                 continue
-            group = str(item.get("entity_group", "")).upper()
+            group = str(item.get("label", "")).strip().lower()
             if self._allowed_groups and group not in self._allowed_groups:
                 continue
             score = float(item.get("score", 0.0))
             if score < self._config.min_score:
                 continue
-            name = str(item.get("word", "")).strip()
+            name = str(item.get("text", "")).strip()
             if not name:
                 continue
             key = normalize_entity_name(name)
@@ -75,7 +78,7 @@ class NerEntityExtractor:
             if len(candidates) >= self._config.max_entities:
                 break
 
-        logger.debug("NER extracted candidates=%s", len(candidates))
+        logger.debug("GLiNER extracted candidates=%s labels=%s", len(candidates), sorted(self._allowed_groups))
         return candidates
 
 

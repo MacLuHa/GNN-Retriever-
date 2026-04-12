@@ -9,6 +9,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 if "transformers" not in sys.modules:
     sys.modules["transformers"] = types.SimpleNamespace(pipeline=lambda *args, **kwargs: None)
+if "gliner" not in sys.modules:
+    sys.modules["gliner"] = types.SimpleNamespace(GLiNER=types.SimpleNamespace(from_pretrained=lambda *args, **kwargs: None))
 if "simplemma" not in sys.modules:
     sys.modules["simplemma"] = types.SimpleNamespace(lemmatize=lambda token, lang=None: token)
 if "httpx" not in sys.modules:
@@ -61,3 +63,18 @@ def test_ner_only_keeps_only_relation_backed_entities() -> None:
     assert diagnostics.mode == "ner_only"
     assert diagnostics.ner_entities_raw == 3
     assert diagnostics.merged_entities == 3
+
+
+def test_merge_entity_candidates_deduplicates_normalized_names() -> None:
+    ner_module = importlib.import_module("stage3_3_graph_knowledge_base.ner_entity_extractor")
+
+    merged = ner_module.merge_entity_candidates(
+        ["Anarchism", "Enlightenment"],
+        [" anarchism ", "Libertarian socialism"],
+    )
+
+    assert [entity.name for entity in merged] == [
+        "Anarchism",
+        "Enlightenment",
+        "Libertarian socialism",
+    ]

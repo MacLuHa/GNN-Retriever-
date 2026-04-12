@@ -5,7 +5,7 @@ description = "GraphRAG MVP for legal retrieval with dedup and hybrid retrieval"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-  "elasticsearch[async]>=8.0.0",
+  "elasticsearch[async]>=8.0.0,<9",
   "fastapi>=0.116.0",
   "uvicorn>=0.35.0",
   "pydantic>=2.11.0",
@@ -26,6 +26,7 @@ dependencies = [
   "torch>=2.2.0",
   "sentence-transformers>=3.0.0",
   "transformers>=5.5.3",
+  "gliner>=0.2.24",
 ]
 
 [project.scripts]

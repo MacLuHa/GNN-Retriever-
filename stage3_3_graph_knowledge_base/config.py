@@ -112,13 +112,16 @@ class NerConfig(BaseSettings):
     )
 
     model_name: str = Field(
-        default="Jean-Baptiste/roberta-large-ner-english",
+        default="urchade/gliner_large-v2.1",
         validation_alias="NER_MODEL_NAME",
     )
     device: int = Field(default=-1, validation_alias="NER_DEVICE")
     min_score: float = Field(default=0.65, validation_alias="NER_MIN_SCORE")
     max_entities: int = Field(default=64, validation_alias="NER_MAX_ENTITIES")
-    allowed_groups: str = Field(default="PER,ORG,LOC,MISC", validation_alias="NER_ALLOWED_GROUPS")
+    allowed_groups: str = Field(
+        default="person,organization,location,event,law,movement,ideology,concept,technical_term,book,publication,work_of_art",
+        validation_alias="NER_ALLOWED_GROUPS",
+    )
 
 
 class OllamaEmbeddingConfig(BaseSettings):

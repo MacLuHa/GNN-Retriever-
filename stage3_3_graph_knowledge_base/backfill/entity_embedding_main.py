@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import logging
 
@@ -42,8 +40,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-from __future__ import annotations
 
 import asyncio
 import logging

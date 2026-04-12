@@ -28,6 +28,13 @@ class EntityEmbeddingService:
         """Записывает embedding для переданных сущностей и возвращает число обновлённых ссылок."""
         updated = 0
         for entity in entities:
+            if entity.embedding_id:
+                logger.debug(
+                    "Skip entity embedding, already present entity_id=%s embedding_id=%s",
+                    entity.entity_id,
+                    entity.embedding_id,
+                )
+                continue
             vector = await self._embedder.embed(entity.entity_name)
             embedding_id = await self._qdrant_store.upsert_entity_vector(
                 entity.entity_id,
