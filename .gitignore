@@ -10,3 +10,4 @@ wheels/
 # Virtual environments
 .venv
 ollama_data
+quest.md
