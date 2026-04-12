@@ -119,7 +119,7 @@ class NerConfig(BaseSettings):
     min_score: float = Field(default=0.65, validation_alias="NER_MIN_SCORE")
     max_entities: int = Field(default=64, validation_alias="NER_MAX_ENTITIES")
     allowed_groups: str = Field(
-        default="person,organization,location,event,law,movement,ideology,concept,technical_term,book,publication,work_of_art",
+        default="person,organization,location,event,book,publication,work_of_art,law,movement,religion,empire,law",
         validation_alias="NER_ALLOWED_GROUPS",
     )
 

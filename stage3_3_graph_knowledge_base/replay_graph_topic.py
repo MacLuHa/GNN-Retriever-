@@ -143,6 +143,11 @@ async def replay_topic_to_database(
                     continue
 
                 extraction, diagnostics = await extractor.extract(text)
+                
+                logger.info("\nText: %s", text)
+                logger.info("\nExtraction: %s", extraction)
+                logger.info("\nDiagnostics: %s", diagnostics)
+
                 if not extraction.entities:
                     logger.info("Skip empty extraction chunk_id=%s", message.chunk_id)
                     should_commit = True
