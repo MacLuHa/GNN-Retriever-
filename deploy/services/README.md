@@ -13,8 +13,14 @@
 
 Ожидается, что сервисы слоя данных (`Elasticsearch`, `Qdrant`, `Neo4j`, `Ollama`, `Kafka`) доступны по URL из `deploy/services/.env`.
 
+**Kafka:** в `deploy/infrastructure/.env` для Docker-клиентов нужно **`KAFKA_EXTERNAL_HOST=host.docker.internal`** (чтобы брокер в metadata не отдавал `localhost:9092`, иначе внутри контейнера stage3 подключение идёт к loopback и падает). В `deploy/services/.env` — **`KAFKA_BOOTSTRAP_SERVERS=host.docker.internal:9092`**. У контейнеров stage3 уже задан `extra_hosts: host.docker.internal:host-gateway`.
+
+Опционально: общая Docker-сеть с брокером и bootstrap `kafka:9093` (INTERNAL) — только если kafka и stage3 в одной сети; иначе имя `kafka` не резолвится → `Unable to bootstrap from [('kafka', 9093, ...)]`.
+
 ## Первый запуск
 
+0. Поднимите стек infrastructure (Kafka и остальное), из корня репозитория:
+   - `docker compose -f deploy/infrastructure/docker-compose.yml --env-file deploy/infrastructure/.env up -d`
 1. Скопируйте env-файл:
    - `cp deploy/services/.env.example deploy/services/.env`
 2. Запустите сервисы (из корня репозитория):
