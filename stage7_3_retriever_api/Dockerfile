@@ -16,7 +16,8 @@ RUN pip install --no-cache-dir \
   "qdrant-client>=1.15.0" \
   "neo4j>=5.0.0" \
   "torch>=2.2.0" \
-  "sentence-transformers>=3.0.0"
+  "sentence-transformers>=3.0.0" \
+  "langfuse"
 
 COPY stage7_1_retriever ./stage7_1_retriever
 COPY stage7_2_reranker ./stage7_2_reranker
