@@ -238,4 +238,167 @@
 - сохранены ключевые улучшения плана (`num_random_neg=8`, `num_hard_neg=8`, `cosine` scheduler, `grad_clip=1.0`);
 - full-абляции остаются доступны через `TRAINING_MODE='ablation'`.
 
+Дополнительно в training loop включён `smart_hard_negatives`:
+
+- каждые `N` эпох (по умолчанию `3`) модель майнит top ложноположительные `entity` для каждого `chunk`;
+- mined-кандидаты объединяются с базовым hard-negative pool;
+- итоговый негативный батч становится ближе к реальным ошибкам ранжирования, что обычно полезно для `Recall@10`.
+
 Итог: цикл обучения стал заметно быстрее в ежедневной работе, при этом качество соответствует лучшей найденной конфигурации из эксперимента.
+
+## Этапный аудит качества entity и soft-pruning кандидатов
+
+Ниже зафиксирован отдельный быстрый аудит после роста графа и включения `smart_hard_negatives`.
+
+### Этап 1. Снимок структуры графа
+
+По состоянию на запуск аудита:
+
+- `chunks = 821`
+- `entities = 2895`
+- `mentions = 4745`
+- `related_to = 3048`
+
+Диагностика связности показала высокий хвост слабо связанных сущностей:
+
+- `single_mention_entities = 2149` (доля `~74.2%`)
+- quartiles по degree (`mentions`): `1 / 1 / 2`
+- quartiles по degree (`related`): `1 / 1 / 2`
+
+Вывод этапа: узкое место — не столько дубли, сколько большой пул "одноразовых" entity.
+
+### Этап 2. Реализация soft-pruning аудита в ноутбуке
+
+В `gnn_retrieval_neo4j.ipynb` добавлена A/B-оценка с маской кандидатов:
+
+- правило soft-pruning: `mentions <= 1 AND related <= 1`;
+- метрики считаются в двух режимах:
+  - обычный candidate set;
+  - pruned candidate set (без физического удаления узлов из Neo4j).
+
+### Этап 3. Результаты A/B (seed=52)
+
+Без pruning:
+
+- baseline test: `Recall@10=0.2063`, `MRR=0.0997`
+- selected GNN test: `Recall@10=0.2611`, `MRR=0.1165`
+
+С pruning-кандидатов (`pruned_entities=1766`, `pruned_share=0.61`):
+
+- baseline test (pruned): `Recall@10=0.2189`, `MRR=0.1071`
+- selected GNN test (pruned): `Recall@10=0.2589`, `MRR=0.1301`
+
+Интерпретация:
+
+- pruning даёт рост `MRR` (ранг правильной entity выше), особенно у GNN;
+- `Recall@10` для GNN почти не меняется (слегка ниже), что ожидаемо при агрессивном фильтре `61%` кандидатов;
+- для baseline pruning также улучшает `Recall@10/MRR`, что подтверждает гипотезу о шуме в candidate set.
+
+### Этап 4. Практическое решение
+
+- Пока не удаляем узлы физически.
+- Используем soft-pruning как runtime/оценочный фильтр кандидатов.
+- Дальше калибруем порог (например, `mentions<=1 & related==0` вместо текущего более жёсткого правила), чтобы сохранить/увеличить `Recall@10` и не потерять выигрыш в `MRR`.
+
+### Этап 5. A/B со смягчённым правилом (`mentions<=1 & related==0`)
+
+Проведён дополнительный контрольный прогон после реализации второго режима pruning в ноутбуке (тот же `seed=52`):
+
+- без pruning:  
+  - baseline test: `Recall@10=0.1975`, `MRR=0.1015`  
+  - selected GNN test: `Recall@10=0.2458`, `MRR=0.1127`
+- strict pruning (`mentions<=1 & related<=1`, `pruned_entities=1766`, `61.0%`):  
+  - baseline test: `Recall@10=0.2080`, `MRR=0.1080`  
+  - selected GNN test: `Recall@10=0.2437`, `MRR=0.1265`
+- soft pruning (`mentions<=1 & related==0`, `pruned_entities=40`, `1.38%`):  
+  - baseline test: `Recall@10=0.1954`, `MRR=0.1008`  
+  - selected GNN test: `Recall@10=0.2458`, `MRR=0.1125`
+
+Вывод этапа:
+
+- смягчённое правило почти не влияет на метрики (эффект близок к нулю, потому что отсекается слишком мало кандидатов);
+- жёсткое правило остаётся лучшим по `MRR`, при умеренном компромиссе по `Recall@10`;
+- как рабочий режим для production-подбора кандидатов логично держать strict-версию как опцию re-rank profile, а soft-версию использовать только как «безопасный» фильтр с минимальным влиянием.
+
+### Этап 6. Доп. калибровка порога (`strict` vs `medium` vs `soft`)
+
+Добавлен третий режим A/B в ноутбуке:
+
+- `strict`: `mentions<=1 & related<=1`
+- `medium`: `mentions<=1 & related<=2`
+- `soft`: `mentions<=1 & related==0`
+
+Результаты на test (тот же `seed=52`, свежий прогон):
+
+- без pruning:
+  - baseline: `Recall@10=0.1921`, `MRR=0.0950`
+  - selected GNN: `Recall@10=0.2296`, `MRR=0.1070`
+- `strict` (`pruned_entities=1778`, `60.97%`):
+  - baseline: `Recall@10=0.2004`, `MRR=0.1010`
+  - selected GNN: `Recall@10=0.2150`, `MRR=0.1136`
+- `medium` (`pruned_entities=2054`, `70.44%`):
+  - baseline: `Recall@10=0.2025`, `MRR=0.0928`
+  - selected GNN: `Recall@10=0.2109`, `MRR=0.1095`
+- `soft` (`pruned_entities=40`, `1.37%`):
+  - baseline: `Recall@10=0.1900`, `MRR=0.0943`
+  - selected GNN: `Recall@10=0.2296`, `MRR=0.1067`
+
+Вывод этапа:
+
+- `medium` оказался слишком агрессивным (ещё сильнее `strict`) и не даёт лучшего баланса;
+- `soft` почти эквивалентен режиму без pruning;
+- для режима «максимизировать MRR» остаётся предпочтительным `strict`, для режима «сохранить Recall@10`» — `soft`/без pruning.
+
+## Этап 7. Phase-2 план под цель `Recall@20 >= 0.40` (минимальные изменения)
+
+Реализован отдельный `recall_hunt`-режим в `gnn_retrieval_neo4j.ipynb` с минимальным вмешательством в пайплайн:
+
+- зафиксирован протокол split: `SPLIT_SEED=52`;
+- зафиксированы сиды обучения: `PHASE2_SEEDS=[42, 52, 62]`;
+- добавлены guardrails отбора:
+  - `recall_min_improvement=0.005` (к control),
+  - `mrr_drop_guardrail=0.005`,
+  - `val_r20_std_threshold=0.02`;
+- добавлены диагностики покрытия кандидатов:
+  - `oracle_recall@20` по текущим эмбеддингам,
+  - `hard_pool_hit_rate@20` по статическому hard-pool.
+
+### Диагностика покрытия (до обучения)
+
+- `oracle_recall@20_val = 0.2973`
+- `oracle_recall@20_test = 0.2712`
+- `hard_pool_hit_rate@20_val = 0.5251`
+- `hard_pool_hit_rate@20_test = 0.5038`
+
+Комментарий: pool покрывает positives лишь примерно в половине случаев, это подтверждает bottleneck по candidate coverage.
+
+### Sweep 4 конфигов × 3 seeds (Recall-focused)
+
+Конфиги:
+
+- `cfgA_control_tail_boost` (control);
+- `cfgB_coverage_plus`;
+- `cfgC_coverage_plus_plus`;
+- `cfgD_stability`.
+
+Агрегированные результаты (`mean/std`):
+
+- `cfgD_stability`: `val_R20=0.3610±0.0019`, `test_R20=0.3513±0.0011`, `val_MRR=0.1292`, `test_MRR=0.1070`
+- `cfgB_coverage_plus`: `val_R20=0.3604±0.0022`, `test_R20=0.3532±0.0029`, `val_MRR=0.1302`, `test_MRR=0.1085`
+- `cfgA_control_tail_boost`: `val_R20=0.3597±0.0029`, `test_R20=0.3506±0.0029`, `val_MRR=0.1296`, `test_MRR=0.1087`
+- `cfgC_coverage_plus_plus`: `val_R20=0.3597±0.0029`, `test_R20=0.3487±0.0040`, `val_MRR=0.1287`, `test_MRR=0.1069`
+
+### Отбор по guardrails и финальный выбор
+
+По заданным guardrails ни один кандидат не дал достаточного прироста к control по `test_R20` (требование `+0.005`), поэтому автоматически выбран control:
+
+- `selected_experiment = cfgA_control_tail_boost` (`seed=52` как лучший внутри конфига по val);
+- финальные метрики:
+  - `val`: `Recall@20=0.3629`, `Recall@10=0.2568`, `MRR=0.1320`
+  - `test`: `Recall@20=0.3500`, `Recall@10=0.2346`, `MRR=0.1089`
+
+Итог этапа:
+
+- цель `Recall@20 >= 0.40` на текущем объёме/качестве candidate set не достигнута;
+- минимальные тюнинги модели/negative mining дали устойчивую зону `test Recall@20 ~0.35`;
+- дальнейший шаг для прорыва к `0.40` — не «докручивать loss», а расширять и улучшать candidate coverage (данные/entity quality/двухстадийный retrieval).
