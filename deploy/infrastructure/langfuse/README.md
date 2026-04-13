@@ -31,3 +31,5 @@
 - `LANGFUSE_HOST=http://host.docker.internal:3001`
 - `LANGFUSE_PUBLIC_KEY=<из настроек проекта Langfuse>`
 - `LANGFUSE_SECRET_KEY=<из настроек проекта Langfuse>`
+
+Чеклист отладки (доступность хоста из контейнеров, `flush`, `LANGFUSE_ENABLED`): см. [deploy/services/README.md](../services/README.md#интеграция-с-langfuse).

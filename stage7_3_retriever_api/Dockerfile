@@ -11,7 +11,7 @@ RUN pip install --no-cache-dir \
   "uvicorn>=0.35.0" \
   "pydantic>=2.11.0" \
   "pydantic-settings>=2.11.0" \
-  "elasticsearch[async]>=8.0.0" \
+  "elasticsearch[async]==8.17.0" \
   "httpx>=0.28.0" \
   "qdrant-client>=1.15.0" \
   "neo4j>=5.0.0" \
