@@ -13,7 +13,9 @@ from .config import AppConfig, load_config
 from .entity_embedding_service import EntityEmbeddingService
 from .entity_qdrant_store import EntityQdrantStore
 from .graph_service import GraphKnowledgeService
+from .hybrid_extractor import HybridEntityExtractor
 from .neo4j_store import Neo4jGraphStore
+from .ner_entity_extractor import NerEntityExtractor
 from .ollama_entity_extractor import OllamaEntityExtractor
 
 
@@ -41,7 +43,15 @@ async def build_app(config: AppConfig | None = None) -> AppContext:
     es_client = AsyncElasticsearch(hosts=[cfg.elasticsearch.url])
     qdrant_client = AsyncQdrantClient(url=cfg.qdrant.url)
     graph_store = Neo4jGraphStore(cfg.neo4j)
-    extractor = OllamaEntityExtractor(cfg.ollama_llm)
+    llm_extractor = OllamaEntityExtractor(cfg.ollama_llm)
+    ner_extractor = None
+    if cfg.extraction.mode.strip().lower() in {"ner_assisted", "ner_only"}:
+        ner_extractor = NerEntityExtractor(cfg.ner)
+    extractor = HybridEntityExtractor(
+        cfg.extraction,
+        llm_extractor,
+        ner_extractor=ner_extractor,
+    )
     entity_embedder = OllamaEmbedder(
         cfg.ollama_embedding,
         logger_name="stage3_3_graph_knowledge_base",

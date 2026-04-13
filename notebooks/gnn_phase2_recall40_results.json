@@ -1,0 +1,73 @@
+{
+  "mode": "recall_hunt",
+  "split_seed": 52,
+  "phase2_seeds": [
+    42,
+    52,
+    62
+  ],
+  "guardrails": {
+    "recall_min_improvement": 0.005,
+    "mrr_drop_guardrail": 0.005,
+    "val_r20_std_threshold": 0.02
+  },
+  "recall_target": 0.4,
+  "coverage_diagnostics": {
+    "oracle_recall@20_val": 0.2972972972972973,
+    "oracle_recall@20_test": 0.27115384615384613,
+    "hard_pool_hit_rate@20_val": 0.525096525096525,
+    "hard_pool_hit_rate@20_test": 0.5038461538461538
+  },
+  "selected_experiment": "cfgA_control_tail_boost",
+  "selected_seed": 52,
+  "final_val_metrics": {
+    "Recall@5": 0.18918919563293457,
+    "Recall@10": 0.2567567527294159,
+    "Recall@20": 0.3629343509674072,
+    "MRR": 0.13200423121452332
+  },
+  "test_metrics": {
+    "Recall@5": 0.14038461446762085,
+    "Recall@10": 0.23461538553237915,
+    "Recall@20": 0.3499999940395355,
+    "MRR": 0.10893846303224564
+  },
+  "aggregate": [
+    {
+      "experiment": "cfgD_stability",
+      "val_R20_mean": 0.3610038657983144,
+      "val_R20_std": 0.001576238595694007,
+      "test_R20_mean": 0.3512820502122243,
+      "test_R20_std": 0.0009065506135703233,
+      "val_MRR_mean": 0.12916249533494314,
+      "test_MRR_mean": 0.106988492111365
+    },
+    {
+      "experiment": "cfgB_coverage_plus",
+      "val_R20_mean": 0.36036036411921185,
+      "val_R20_std": 0.0018200835550439515,
+      "test_R20_mean": 0.3532051245371501,
+      "test_R20_std": 0.0023984968544101346,
+      "val_MRR_mean": 0.13020190596580505,
+      "test_MRR_mean": 0.10852378358443578
+    },
+    {
+      "experiment": "cfgA_control_tail_boost",
+      "val_R20_mean": 0.35971686244010925,
+      "val_R20_std": 0.002407749536010505,
+      "test_R20_mean": 0.35064102212587994,
+      "test_R20_std": 0.002398507474400092,
+      "val_MRR_mean": 0.1295717457930247,
+      "test_MRR_mean": 0.10873563587665558
+    },
+    {
+      "experiment": "cfgC_coverage_plus_plus",
+      "val_R20_mean": 0.35971686244010925,
+      "val_R20_std": 0.002407749536010505,
+      "test_R20_mean": 0.34871794780095416,
+      "test_R20_std": 0.003268601083361552,
+      "val_MRR_mean": 0.12873085836569467,
+      "test_MRR_mean": 0.10688050587972005
+    }
+  ]
+}

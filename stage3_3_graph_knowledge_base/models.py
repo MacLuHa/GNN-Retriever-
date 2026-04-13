@@ -7,6 +7,19 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from .entity_ids import normalize_entity_name
 
 _MIN_ENTITY_NAME_LEN = 3
+_GENERIC_ENTITY_STOPWORDS = {
+    "state",
+    "system",
+    "group",
+    "people",
+    "society",
+    "government",
+    "movement",
+    "religion",
+    "empire",
+    "law",
+}
+_MAX_ENTITIES_PER_CHUNK = 24
 
 
 class GraphMessage(BaseModel):
@@ -130,6 +143,8 @@ class EntityExtractionResult(BaseModel):
                 s = item.strip()
                 if len(s) >= _MIN_ENTITY_NAME_LEN:
                     normalized.append({"name": s})
+            elif isinstance(item, ExtractedEntity):
+                normalized.append(item.model_dump())
             elif isinstance(item, dict):
                 normalized.append(item)
         return {**data, "entities": normalized}
@@ -138,7 +153,62 @@ class EntityExtractionResult(BaseModel):
     def drop_entities_shorter_than_min(self) -> EntityExtractionResult:
         """Имя сущности не короче ``_MIN_ENTITY_NAME_LEN`` символов (после strip)."""
         kept = [e for e in self.entities if len(e.name.strip()) >= _MIN_ENTITY_NAME_LEN]
-        return self.model_copy(update={"entities": kept})
+        self.entities = kept
+        return self
+
+    @model_validator(mode="after")
+    def filter_low_quality_entities(self) -> EntityExtractionResult:
+        """Снижает шум в LLM-only extraction: защищает relation-backed entities и отбрасывает слабые singleton'ы."""
+        relation_backed_keys = set()
+        for rel in self.relations:
+            relation_backed_keys.add(normalize_entity_name(rel.from_name))
+            relation_backed_keys.add(normalize_entity_name(rel.to_name))
+        relation_backed_keys.discard("")
+
+        stronger_names = []
+        for entity in self.entities:
+            name = " ".join(entity.name.strip().split())
+            if not name:
+                continue
+            key = normalize_entity_name(name)
+            token_count = len(name.split())
+            is_relation_backed = key in relation_backed_keys
+            is_generic_singleton = token_count == 1 and key in _GENERIC_ENTITY_STOPWORDS
+
+            if is_generic_singleton and not is_relation_backed:
+                continue
+            stronger_names.append(ExtractedEntity(name=name))
+
+        normalized_names = [normalize_entity_name(entity.name) for entity in stronger_names]
+        kept_entities: list[ExtractedEntity] = []
+        for idx, entity in enumerate(stronger_names):
+            key = normalized_names[idx]
+            is_relation_backed = key in relation_backed_keys
+            token_count = len(entity.name.split())
+
+            # Убираем короткую общую сущность, если рядом есть более длинная, содержащая её как подстроку.
+            shadowed_by_longer = any(
+                idx != other_idx
+                and key
+                and key in normalized_names[other_idx]
+                and len(normalized_names[other_idx]) > len(key) + 2
+                for other_idx in range(len(stronger_names))
+            )
+            if shadowed_by_longer and token_count == 1 and not is_relation_backed:
+                continue
+            kept_entities.append(entity)
+
+        prioritized = sorted(
+            kept_entities,
+            key=lambda entity: (
+                normalize_entity_name(entity.name) not in relation_backed_keys,
+                len(entity.name.split()) == 1,
+                len(entity.name),
+            ),
+            reverse=False,
+        )
+        self.entities = prioritized[:_MAX_ENTITIES_PER_CHUNK]
+        return self
 
     @model_validator(mode="after")
     def relations_only_between_listed_entities(self) -> EntityExtractionResult:
@@ -150,4 +220,11 @@ class EntityExtractionResult(BaseModel):
             for r in self.relations
             if normalize_entity_name(r.from_name) in keys and normalize_entity_name(r.to_name) in keys
         ]
-        return self.model_copy(update={"relations": filtered})
+        self.relations = filtered
+        return self
+
+
+class RelationExtractionResult(BaseModel):
+    """Структурированный ответ модели извлечения только связей."""
+
+    relations: list[ExtractedRelation] = Field(default_factory=list)

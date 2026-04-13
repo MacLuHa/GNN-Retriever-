@@ -68,6 +68,40 @@ class Neo4jGraphStore:
             if record is None:
                 raise ValueError(f"Entity not found for entity_id={entity_id}")
 
+    async def get_entities_by_ids(self, entity_ids: list[str]) -> list[GraphEntityNode]:
+        """Возвращает сущности по ``entity_id`` вместе с уже сохранённым ``embedding_id``."""
+        ids = [entity_id.strip() for entity_id in entity_ids if entity_id.strip()]
+        if not ids:
+            return []
+
+        async with self._driver.session(database=self._config.database) as session:
+            result = await session.run(
+                """
+                UNWIND $entity_ids AS entity_id
+                MATCH (e:Entity {entity_id: entity_id})
+                RETURN
+                  e.entity_id AS entity_id,
+                  e.entity_name AS entity_name,
+                  e.embedding_id AS embedding_id
+                """,
+                entity_ids=ids,
+            )
+            rows: dict[str, GraphEntityNode] = {}
+            async for record in result:
+                entity_id = str(record["entity_id"])
+                rows[entity_id] = GraphEntityNode(
+                    entity_id=entity_id,
+                    entity_name=str(record["entity_name"]),
+                    embedding_id=(
+                        str(record["embedding_id"])
+                        if record["embedding_id"] is not None
+                        else None
+                    ),
+                )
+            await result.consume()
+
+        return [rows[entity_id] for entity_id in ids if entity_id in rows]
+
     async def ensure_schema(self) -> None:
         """Уникальность chunk_id и entity_id для MERGE."""
         statements = (
