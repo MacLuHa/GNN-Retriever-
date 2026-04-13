@@ -13,19 +13,19 @@
 ## Запуск
 
 1. Скопируйте файл окружения:
-   - `cp infrastructure/langfuse/.env.example infrastructure/langfuse/.env`
+   - `cp deploy/infrastructure/langfuse/.env.example deploy/infrastructure/langfuse/.env`
 2. Задайте безопасные значения для:
    - `LANGFUSE_SALT`
    - `LANGFUSE_ENCRYPTION_KEY`
    - `LANGFUSE_NEXTAUTH_SECRET`
-3. Запустите стек:
-   - `docker compose -f infrastructure/langfuse/docker-compose.yml --env-file infrastructure/langfuse/.env up -d`
+3. Запустите стек (из корня репозитория):
+   - `docker compose -f deploy/infrastructure/langfuse/docker-compose.yml --env-file deploy/infrastructure/langfuse/.env up -d`
 4. Откройте:
    - `http://localhost:3001`
 
 ## Подключение стека приложения
 
-Установите следующие значения в `services/.env`:
+Установите следующие значения в `deploy/services/.env`:
 
 - `LANGFUSE_ENABLED=true`
 - `LANGFUSE_HOST=http://host.docker.internal:3001`
