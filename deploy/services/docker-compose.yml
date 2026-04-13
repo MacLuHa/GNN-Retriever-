@@ -140,6 +140,8 @@ services:
     depends_on:
       stage7-3-retriever-api:
         condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - services-network
     restart: unless-stopped

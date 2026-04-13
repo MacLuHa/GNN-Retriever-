@@ -65,7 +65,7 @@ class GnnRetriever:
         self._ollama = ollama_config
         self._gnn = gnn_config
         self._default_top_k = default_top_k
-        self._weights = self._load_weights(Path(self._gnn.model_path))
+
 
     async def close(self) -> None:
         """Закрывает внешние ресурсы GNN-ретривера."""
@@ -84,54 +84,126 @@ class GnnRetriever:
 
         query_vector = await self._embed_query(query)
         size = max(1, top_k or self._default_top_k)
-        seeds = await self._fetch_seed_candidates(query_vector, size)
+  
+        return await self._retrieve_neo4j_gnn(query, query_vector, size)
+
+
+    async def _retrieve_neo4j_gnn(self, query: str, query_vector: list[float], size: int) -> list[RetrievedChunk]:
+        """Ранжирование по gnn_embedding из Neo4j (ноутбук) + vector index для seeds."""
+        q_fit = _fit_vector(query_vector, self._ollama.embedding_dim)
+        seeds = await self._fetch_neo4j_vector_seeds(q_fit, size)
         if not seeds:
-            logger.info("GNN retrieval has no seeds")
+            logger.info("Neo4j GNN retrieval has no vector-index seeds (check index ONLINE and gnn_embedding)")
             return []
 
-        graph_map, related_edges = await self._expand_graph({seed.chunk_id for seed in seeds})
-        candidate_chunks = set(graph_map.keys()) | {seed.chunk_id for seed in seeds}
-        chunk_vectors = await self._fetch_chunk_vectors(candidate_chunks)
+        graph_map, _related_edges = await self._expand_graph({s.chunk_id for s in seeds})
+        candidate_chunks = set(graph_map.keys()) | {s.chunk_id for s in seeds}
+        chunk_vectors = await self._fetch_gnn_vectors_from_neo4j(candidate_chunks)
         if not chunk_vectors:
-            logger.warning("GNN retrieval has no vectors for candidates")
+            logger.warning("Neo4j GNN retrieval: no gnn_embedding on candidate chunks")
             return []
 
-        node_vectors = self._build_node_vectors(graph_map, related_edges, chunk_vectors, query_vector)
-        if not node_vectors:
-            logger.warning("GNN retrieval produced empty node vectors")
-            return []
-
-        hidden = self._run_layer(node_vectors, self._weights.w_self_1, self._weights.w_neigh_1, self._weights.b_1)
-        encoded = self._run_layer(hidden, self._weights.w_self_2, self._weights.w_neigh_2, self._weights.b_2)
-        projected_query = self._project_query(query_vector, len(next(iter(encoded.values()))))
-
-        seed_scores = {seed.chunk_id: seed.score for seed in seeds}
+        seed_index_scores = {s.chunk_id: s.score for s in seeds}
         ranked: list[RetrievedChunk] = []
-        for chunk_id, vector in encoded.items():
-            if not chunk_id.startswith("chunk:"):
-                continue
-            real_chunk_id = chunk_id.removeprefix("chunk:")
-            cosine = _cosine_similarity(vector, projected_query)
-            linear = 0.0
-            if self._weights.scorer is not None:
-                linear = _dot(vector, self._weights.scorer) + self._weights.scorer_bias
-            seed_bonus = seed_scores.get(real_chunk_id, 0.0)
-            score = cosine + linear + seed_bonus
+        for chunk_id, raw_vec in chunk_vectors.items():
+            chunk_fit = _fit_vector(raw_vec, self._ollama.embedding_dim)
+            cosine = _cosine_similarity(chunk_fit, q_fit)
+            score = cosine
+            meta: dict[str, Any] = {
+                "entity_count": len(graph_map.get(chunk_id, [])),
+                "neo4j_gnn": True,
+            }
+            if chunk_id in seed_index_scores:
+                idx_sc = seed_index_scores[chunk_id]
+                meta["neo4j_vector_index_score"] = idx_sc
+                meta["seed_score"] = idx_sc
             ranked.append(
                 RetrievedChunk(
-                    chunk_id=real_chunk_id,
+                    chunk_id=chunk_id,
                     score=score,
                     source_scores={"gnn": score},
-                    metadata={
-                        "seed_score": seed_bonus,
-                        "entity_count": len(graph_map.get(real_chunk_id, [])),
-                    },
+                    metadata=meta,
                 )
             )
 
         ranked.sort(key=lambda item: item.score, reverse=True)
-        logger.info("GNN retrieval done query_len=%s results=%s", len(query), len(ranked[:size]))
+        logger.info("Neo4j GNN retrieval done query_len=%s results=%s", len(query), len(ranked[:size]))
         return ranked[:size]
+
+    async def _fetch_neo4j_vector_seeds(self, query_vector: list[float], top_k: int) -> list[QdrantSeed]:
+        """Top-k Chunk по векторному индексу Neo4j на gnn_embedding."""
+        seeds: list[QdrantSeed] = []
+        cypher = """
+        CALL db.index.vector.queryNodes($index_name, $top_k, $embedding)
+        YIELD node, score
+        RETURN node.chunk_id AS chunk_id, score AS score, node.gnn_embedding AS gnn_embedding
+        """
+        try:
+            async with self._neo4j_driver.session(database=self._neo4j_config.database) as session:
+                result = await session.run(
+                    cypher,
+                    index_name=self._gnn.neo4j_gnn_vector_index,
+                    top_k=top_k,
+                    embedding=query_vector,
+                )
+                async for row in result:
+                    raw_cid = row.get("chunk_id")
+                    if raw_cid is None:
+                        continue
+                    chunk_id = str(raw_cid)
+                    if not chunk_id:
+                        continue
+                    vec = _as_vector(row["gnn_embedding"])
+                    score = float(row["score"] or 0.0)
+                    if not vec:
+                        continue
+                    seeds.append(
+                        QdrantSeed(
+                            chunk_id=chunk_id,
+                            score=score,
+                            vector=vec,
+                            payload={"source": "neo4j_vector_index"},
+                        )
+                    )
+        except Exception as exc:  # noqa: BLE001
+            msg = str(exc)
+            logger.warning("Neo4j vector index query failed: %s", exc)
+            if "no such vector schema index" in msg.lower():
+                logger.warning(
+                    "Создайте индекс в Neo4j 5.11+ (после записи Chunk.gnn_embedding): см. "
+                    "stage7_1_retriever/neo4j/chunk_gnn_embedding_vector_index.cypher "
+                    "или ячейку «Создать vector index» в notebooks/gnn_retrieval_query_test.ipynb. "
+                    "Проверка: SHOW INDEXES. Имя индекса должно совпадать с GNN_NEO4J_VECTOR_INDEX=%r.",
+                    self._gnn.neo4j_gnn_vector_index,
+                )
+        return seeds
+
+    async def _fetch_gnn_vectors_from_neo4j(self, chunk_ids: set[str]) -> dict[str, list[float]]:
+        """Читает c.gnn_embedding пакетами по списку chunk_id."""
+        if not chunk_ids:
+            return {}
+        ids = list(chunk_ids)
+        batch_sz = max(1, self._gnn.batch_size)
+        vectors: dict[str, list[float]] = {}
+        cypher = """
+        UNWIND $chunk_ids AS cid
+        MATCH (c:Chunk)
+        WHERE c.chunk_id = cid AND c.gnn_embedding IS NOT NULL
+        RETURN c.chunk_id AS chunk_id, c.gnn_embedding AS gnn_embedding
+        """
+        async with self._neo4j_driver.session(database=self._neo4j_config.database) as session:
+            for offset in range(0, len(ids), batch_sz):
+                batch = ids[offset : offset + batch_sz]
+                result = await session.run(cypher, chunk_ids=batch)
+                async for row in result:
+                    raw_cid = row.get("chunk_id")
+                    if raw_cid is None:
+                        continue
+                    cid = str(raw_cid)
+                    vec = _as_vector(row["gnn_embedding"])
+                    if cid and vec:
+                        vectors[cid] = vec
+        return vectors
 
     async def _embed_query(self, query_text: str) -> list[float]:
         """Строит embedding запроса через Ollama."""

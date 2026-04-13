@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _ENV_FILE = Path(__file__).resolve().parent / ".env"
@@ -102,6 +103,18 @@ class GnnConfig(BaseSettings):
     model_path: str = Field(default="stage7_1_retriever/gnn_weights.json", validation_alias="GNN_MODEL_PATH")
     hops: int = Field(default=2, validation_alias="GNN_HOPS")
     batch_size: int = Field(default=64, validation_alias="GNN_BATCH_SIZE")
+    use_neo4j_embeddings: bool = Field(default=True, validation_alias="GNN_USE_NEO4J_EMBEDDINGS")
+    neo4j_gnn_vector_index: str = Field(
+        default="chunk_gnn_embedding",
+        validation_alias="GNN_NEO4J_VECTOR_INDEX",
+    )
+
+    @field_validator("neo4j_gnn_vector_index")
+    @classmethod
+    def _neo4j_vector_index_safe(cls, value: str) -> str:
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", value):
+            raise ValueError("GNN_NEO4J_VECTOR_INDEX must match [A-Za-z][A-Za-z0-9_]*")
+        return value
 
 
 class RuntimeConfig(BaseSettings):

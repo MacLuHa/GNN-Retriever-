@@ -38,10 +38,12 @@ class _LangfuseTracer:
                 public_key=public_key,
                 secret_key=secret_key,
             )
-            logger.info("Langfuse tracing enabled host=%s", host)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Langfuse initialization failed: %s", exc)
+            logger.warning("Langfuse initialization failed, tracing disabled: %s", exc, exc_info=True)
             self._client = None
+
+    def has_client(self) -> bool:
+        return self._client is not None
 
     def trace(
         self,
@@ -133,7 +135,7 @@ class _LangfuseTracer:
             try:
                 flush_method()
             except Exception as exc:  # noqa: BLE001
-                logger.debug("Langfuse flush error: %s", exc)
+                logger.warning("Langfuse flush failed: %s", exc)
 
 
 class RetrieverApiState:
@@ -176,6 +178,18 @@ class RetrieverApiState:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Reranker initialization failed, disabled for runtime: %s", exc)
                 self.reranker = None
+
+        if self.config.langfuse.enabled:
+            if self.langfuse.has_client():
+                logger.info(
+                    "Langfuse tracing active host=%s (events flushed after each /retrieve)",
+                    self.config.langfuse.host,
+                )
+            else:
+                logger.warning(
+                    "LANGFUSE_ENABLED is true but the SDK client is not active; "
+                    "check LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, and LANGFUSE_HOST"
+                )
 
     async def shutdown(self) -> None:
         """Закрывает ресурсы retriever."""
@@ -235,124 +249,127 @@ async def retrieve(payload: RetrieveRequest, request: Request) -> RetrieveRespon
         },
     )
 
-    if state.retriever is None:
-        state.langfuse.update_trace(
-            trace,
-            metadata={
-                "error": "retriever_not_ready",
-                "chat_session_id": chat_session_id,
-            },
-        )
-        raise HTTPException(status_code=503, detail="Retriever is not ready")
-
-    start = time.perf_counter()
-    final_top_k = payload.top_k
-    retrieve_top_k = payload.top_k
-    if state.config.reranker.enabled:
-        if retrieve_top_k is None:
-            retrieve_top_k = state.config.reranker.top_n
-        else:
-            retrieve_top_k = max(retrieve_top_k, state.config.reranker.top_n)
-
-    retrieval_span = state.langfuse.span(
-        trace=trace,
-        name="knowledge_base_retrieval",
-        input_data={"query": payload.query, "top_k": retrieve_top_k, "filters": payload.filters},
-        metadata={"stage": "retrieval"},
-    )
     try:
-        chunks = await asyncio.wait_for(
-            state.retriever.retrieve(
-                query_text=payload.query,
-                filters=payload.filters,
-                top_k=retrieve_top_k,
-            ),
-            timeout=state.config.api.retrieve_timeout_sec,
-        )
-        state.langfuse.end_span(
-            retrieval_span,
-            output_data={"results_count": len(chunks)},
+        if state.retriever is None:
+            state.langfuse.update_trace(
+                trace,
+                metadata={
+                    "error": "retriever_not_ready",
+                    "chat_session_id": chat_session_id,
+                },
+            )
+            raise HTTPException(status_code=503, detail="Retriever is not ready")
+
+        start = time.perf_counter()
+        final_top_k = payload.top_k
+        retrieve_top_k = payload.top_k
+        if state.config.reranker.enabled:
+            if retrieve_top_k is None:
+                retrieve_top_k = state.config.reranker.top_n
+            else:
+                retrieve_top_k = max(retrieve_top_k, state.config.reranker.top_n)
+
+        retrieval_span = state.langfuse.span(
+            trace=trace,
+            name="knowledge_base_retrieval",
+            input_data={"query": payload.query, "top_k": retrieve_top_k, "filters": payload.filters},
             metadata={"stage": "retrieval"},
         )
-    except TimeoutError as exc:
-        logger.warning("Retrieve timeout query_len=%s", len(payload.query))
-        state.langfuse.end_span(
-            retrieval_span,
-            metadata={"error": "retrieve_timeout", "stage": "retrieval"},
-            level="ERROR",
-        )
-        state.langfuse.update_trace(trace, metadata={"error": "retrieve_timeout"})
-        raise HTTPException(status_code=504, detail="Retrieve timeout") from exc
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("Retrieve failed: %s", exc)
-        state.langfuse.end_span(
-            retrieval_span,
-            metadata={"error": str(exc), "stage": "retrieval"},
-            level="ERROR",
-        )
-        state.langfuse.update_trace(trace, metadata={"error": "retrieve_failed"})
-        raise HTTPException(status_code=500, detail="Retrieve failed") from exc
+        try:
+            chunks = await asyncio.wait_for(
+                state.retriever.retrieve(
+                    query_text=payload.query,
+                    filters=payload.filters,
+                    top_k=retrieve_top_k,
+                ),
+                timeout=state.config.api.retrieve_timeout_sec,
+            )
+            state.langfuse.end_span(
+                retrieval_span,
+                output_data={"results_count": len(chunks)},
+                metadata={"stage": "retrieval"},
+            )
+        except TimeoutError as exc:
+            logger.warning("Retrieve timeout query_len=%s", len(payload.query))
+            state.langfuse.end_span(
+                retrieval_span,
+                metadata={"error": "retrieve_timeout", "stage": "retrieval"},
+                level="ERROR",
+            )
+            state.langfuse.update_trace(trace, metadata={"error": "retrieve_timeout"})
+            raise HTTPException(status_code=504, detail="Retrieve timeout") from exc
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Retrieve failed: %s", exc)
+            state.langfuse.end_span(
+                retrieval_span,
+                metadata={"error": str(exc), "stage": "retrieval"},
+                level="ERROR",
+            )
+            state.langfuse.update_trace(trace, metadata={"error": "retrieve_failed"})
+            raise HTTPException(status_code=500, detail="Retrieve failed") from exc
 
-    rerank_start = time.perf_counter()
-    rerank_span = state.langfuse.span(
-        trace=trace,
-        name="rerank",
-        input_data={"initial_results_count": len(chunks), "enabled": state.reranker is not None},
-        metadata={"stage": "rerank"},
-    )
-    if state.reranker is not None:
-        chunks = await state.reranker.rerank(
-            query_text=payload.query,
-            chunks=chunks,
-            final_top_k=final_top_k,
+        rerank_start = time.perf_counter()
+        rerank_span = state.langfuse.span(
+            trace=trace,
+            name="rerank",
+            input_data={"initial_results_count": len(chunks), "enabled": state.reranker is not None},
+            metadata={"stage": "rerank"},
         )
-    rerank_ms = int((time.perf_counter() - rerank_start) * 1000)
-    state.langfuse.end_span(
-        rerank_span,
-        output_data={"results_count": len(chunks), "rerank_ms": rerank_ms},
-        metadata={"stage": "rerank"},
-    )
+        if state.reranker is not None:
+            chunks = await state.reranker.rerank(
+                query_text=payload.query,
+                chunks=chunks,
+                final_top_k=final_top_k,
+            )
+        rerank_ms = int((time.perf_counter() - rerank_start) * 1000)
+        state.langfuse.end_span(
+            rerank_span,
+            output_data={"results_count": len(chunks), "rerank_ms": rerank_ms},
+            metadata={"stage": "rerank"},
+        )
 
-    latency_ms = int((time.perf_counter() - start) * 1000)
-    clip_span = state.langfuse.span(
-        trace=trace,
-        name="clip_context",
-        input_data={"max_context_chars": state.config.api.max_context_chars, "results_count": len(chunks)},
-        metadata={"stage": "response"},
-    )
-    limited = _clip_context(chunks, state.config.api.max_context_chars)
-    state.langfuse.end_span(
-        clip_span,
-        output_data={"results_count": len(limited)},
-        metadata={"stage": "response"},
-    )
-    logger.info(
-        "Retrieve completed latency_ms=%s rerank_ms=%s query_len=%s results=%s",
-        latency_ms,
-        rerank_ms,
-        len(payload.query),
-        len(limited),
-    )
-    response = RetrieveResponse(
-        query=payload.query,
-        top_k=payload.top_k or len(limited),
-        latency_ms=latency_ms,
-        results=[_chunk_to_dict(item) for item in limited],
-    )
-    state.langfuse.update_trace(
-        trace,
-        output_data={
-            "latency_ms": latency_ms,
-            "rerank_ms": rerank_ms,
-            "results_count": len(limited),
-        },
-        metadata={
-            "service": "stage7_3_retriever_api",
-            "chat_session_id": chat_session_id,
-            "status": "ok",
-        },
-    )
-    return response
+        latency_ms = int((time.perf_counter() - start) * 1000)
+        clip_span = state.langfuse.span(
+            trace=trace,
+            name="clip_context",
+            input_data={"max_context_chars": state.config.api.max_context_chars, "results_count": len(chunks)},
+            metadata={"stage": "response"},
+        )
+        limited = _clip_context(chunks, state.config.api.max_context_chars)
+        state.langfuse.end_span(
+            clip_span,
+            output_data={"results_count": len(limited)},
+            metadata={"stage": "response"},
+        )
+        logger.info(
+            "Retrieve completed latency_ms=%s rerank_ms=%s query_len=%s results=%s",
+            latency_ms,
+            rerank_ms,
+            len(payload.query),
+            len(limited),
+        )
+        response = RetrieveResponse(
+            query=payload.query,
+            top_k=payload.top_k or len(limited),
+            latency_ms=latency_ms,
+            results=[_chunk_to_dict(item) for item in limited],
+        )
+        state.langfuse.update_trace(
+            trace,
+            output_data={
+                "latency_ms": latency_ms,
+                "rerank_ms": rerank_ms,
+                "results_count": len(limited),
+            },
+            metadata={
+                "service": "stage7_3_retriever_api",
+                "chat_session_id": chat_session_id,
+                "status": "ok",
+            },
+        )
+        return response
+    finally:
+        state.langfuse.flush()
 
 
 def _clip_context(chunks: list[RetrievedChunk], max_chars: int) -> list[RetrievedChunk]:
