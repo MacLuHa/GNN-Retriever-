@@ -21,7 +21,7 @@
 ```
 
 ## Настройка через .env
-Скопируй шаблон:
+Скопируйте шаблон:
 ```bash
 cp .env.example .env
 ```
@@ -53,8 +53,8 @@ uv run stage2-ingestion-kafka
 uv run python scripts/run_stage2_pipeline.py
 ```
 
-## Hugging Face режим
-Pipeline читает документы из HF dataset и публикует чанки в Kafka.
+## Режим Hugging Face
+Pipeline читает документы из датасета HF и публикует чанки в Kafka.
 
 Для `wikimedia/wikipedia` используется plain text (`text`), поэтому для `source_type=text`
 чанкинг идет напрямую по тексту, без PDF/DOCX/HTML-парсеров.

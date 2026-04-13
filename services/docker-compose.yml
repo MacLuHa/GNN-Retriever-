@@ -1,0 +1,178 @@
+services:
+  stage3-1-chunks-indexing:
+    build:
+      context: ..
+      dockerfile: stage3_1_chunks_indexing/Dockerfile
+    container_name: stage3-1-chunks-indexing
+    env_file:
+      - ./.env
+    environment:
+      - KAFKA_CONSUMER_GROUP=chunk-indexer
+      - KAFKA_CHUNKS_TOPIC=${KAFKA_CHUNKS_TOPIC:-documents.chunks}
+      - KAFKA_VECTORIZE_TOPIC=${KAFKA_VECTORIZE_TOPIC:-documents.vectorize}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import os; os.kill(1, 0)\" || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - services-network
+    restart: unless-stopped
+
+  stage3-2-chunks-vectorizing:
+    build:
+      context: ..
+      dockerfile: stage3_2_chunks_vectorizing/Dockerfile
+    container_name: stage3-2-chunks-vectorizing
+    env_file:
+      - ./.env
+    environment:
+      - KAFKA_CONSUMER_GROUP=chunk-vectorizer
+      - KAFKA_VECTORIZE_TOPIC=${KAFKA_VECTORIZE_TOPIC:-documents.vectorize}
+      - KAFKA_GRAPH_TOPIC=${KAFKA_GRAPH_TOPIC:-documents.graph}
+      - QDRANT_DISTANCE=${QDRANT_DISTANCE:-Cosine}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      stage3-1-chunks-indexing:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import os; os.kill(1, 0)\" || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - services-network
+    restart: unless-stopped
+
+  stage3-3-graph-knowledge-base:
+    build:
+      context: ..
+      dockerfile: stage3_3_graph_knowledge_base/Dockerfile
+    container_name: stage3-3-graph-knowledge-base
+    env_file:
+      - ./.env
+    environment:
+      - KAFKA_CONSUMER_GROUP=graph-knowledge-base
+      - KAFKA_GRAPH_TOPIC=${KAFKA_GRAPH_TOPIC:-documents.graph}
+      - KAFKA_GRAPH_OUTPUT_TOPIC=${KAFKA_GRAPH_OUTPUT_TOPIC:-documents.graph.entities}
+      - KAFKA_GRAPH_DLQ_TOPIC=${KAFKA_GRAPH_DLQ_TOPIC:-documents.graph-dlq}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      stage3-2-chunks-vectorizing:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import os; os.kill(1, 0)\" || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - services-network
+    restart: unless-stopped
+
+  stage7-3-retriever-api:
+    build:
+      context: ..
+      dockerfile: stage7_3_retriever_api/Dockerfile
+    container_name: stage7-3-retriever-api
+    env_file:
+      - ./.env
+    environment:
+      - RETRIEVER_API_HOST=0.0.0.0
+      - RETRIEVER_API_PORT=${RETRIEVER_API_PORT}
+      - LANGFUSE_ENABLED=${LANGFUSE_ENABLED:-false}
+      - LANGFUSE_HOST=${LANGFUSE_HOST:-http://host.docker.internal:3001}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+    ports:
+      - "${RETRIEVER_API_PORT}:${RETRIEVER_API_PORT}"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:${RETRIEVER_API_PORT}/health', timeout=2)\" || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      stage3-1-chunks-indexing:
+        condition: service_started
+      stage3-2-chunks-vectorizing:
+        condition: service_started
+      stage3-3-graph-knowledge-base:
+        condition: service_started
+    networks:
+      - services-network
+    restart: unless-stopped
+
+  openwebui-pipelines:
+    build:
+      context: .
+      dockerfile: openwebui/pipelines/Dockerfile
+    container_name: openwebui-pipelines
+    env_file:
+      - ./.env
+    environment:
+      - PIPELINES_API_KEY=${OPENWEBUI_PIPELINES_API_KEY}
+      - RETRIEVER_API_URL=${RETRIEVER_API_URL}
+      - RETRIEVER_TIMEOUT_SEC=${RETRIEVER_TIMEOUT_SEC}
+      - RETRIEVER_TOP_K=${RETRIEVER_TOP_K}
+      - RETRIEVER_MAX_CONTEXT_CHARS=${RETRIEVER_MAX_CONTEXT_CHARS}
+      - RETRIEVER_MAX_CONTEXT_CHUNKS=${RETRIEVER_MAX_CONTEXT_CHUNKS}
+      - LANGFUSE_ENABLED=${LANGFUSE_ENABLED:-false}
+      - LANGFUSE_HOST=${LANGFUSE_HOST:-http://host.docker.internal:3001}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+    volumes:
+      - ./openwebui/pipelines:/app/pipelines
+    ports:
+      - "${OPENWEBUI_PIPELINES_PORT}:9099"
+    depends_on:
+      stage7-3-retriever-api:
+        condition: service_healthy
+    networks:
+      - services-network
+    restart: unless-stopped
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    env_file:
+      - ./.env
+    environment:
+      - WEBUI_AUTH=False
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL}
+      - RETRIEVER_API_URL=${RETRIEVER_API_URL}
+      - OPENAI_API_BASE_URLS=http://openwebui-pipelines:9099
+      - OPENAI_API_KEYS=${OPENWEBUI_PIPELINES_API_KEY}
+    ports:
+      - "${OPENWEBUI_PORT}:8080"
+    depends_on:
+      stage7-3-retriever-api:
+        condition: service_healthy
+      openwebui-pipelines:
+        condition: service_started
+    volumes:
+      - open_webui_data:/app/backend/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - services-network
+    restart: unless-stopped
+
+networks:
+  services-network:
+    driver: bridge
+
+volumes:
+  open_webui_data:

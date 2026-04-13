@@ -28,12 +28,29 @@ class ApiConfig(BaseSettings):
     log_level: str = Field(default="INFO", validation_alias="RETRIEVER_API_LOG_LEVEL")
 
 
+class LangfuseConfig(BaseSettings):
+    """Настройки интеграции с Langfuse."""
+
+    model_config = SettingsConfigDict(
+        env_file=_ENV_FILE,
+        env_file_encoding="utf-8",
+        extra="ignore",
+        populate_by_name=True,
+    )
+
+    enabled: bool = Field(default=False, validation_alias="LANGFUSE_ENABLED")
+    host: str = Field(default="http://localhost:3001", validation_alias="LANGFUSE_HOST")
+    public_key: str = Field(default="", validation_alias="LANGFUSE_PUBLIC_KEY")
+    secret_key: str = Field(default="", validation_alias="LANGFUSE_SECRET_KEY")
+
+
 @dataclass(frozen=True)
 class AppConfig:
     """Сводная конфигурация API."""
 
     api: ApiConfig
     reranker: RerankerConfig
+    langfuse: LangfuseConfig
 
 
 def load_config() -> AppConfig:
@@ -41,5 +58,6 @@ def load_config() -> AppConfig:
     return AppConfig(
         api=ApiConfig(),
         reranker=RerankerConfig(),
+        langfuse=LangfuseConfig(),
     )
 
