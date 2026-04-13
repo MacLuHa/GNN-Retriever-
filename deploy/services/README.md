@@ -11,14 +11,14 @@
 - `openwebui-pipelines` — runtime пайплайнов для retrieval-фильтра.
 - `stage7-3-retriever-api` — HTTP API-обёртка над `stage7_1_retriever`.
 
-Ожидается, что сервисы слоя данных (`Elasticsearch`, `Qdrant`, `Neo4j`, `Ollama`) доступны по URL из `services/.env`.
+Ожидается, что сервисы слоя данных (`Elasticsearch`, `Qdrant`, `Neo4j`, `Ollama`, `Kafka`) доступны по URL из `deploy/services/.env`.
 
 ## Первый запуск
 
 1. Скопируйте env-файл:
-   - `cp services/.env.example services/.env`
-2. Запустите сервисы:
-   - `docker compose -f services/docker-compose.yml --env-file services/.env up -d --build`
+   - `cp deploy/services/.env.example deploy/services/.env`
+2. Запустите сервисы (из корня репозитория):
+   - `docker compose -f deploy/services/docker-compose.yml --env-file deploy/services/.env up -d --build`
 3. Проверьте состояние:
    - `curl http://localhost:8010/health`
    - откройте `http://localhost:3000`
@@ -46,7 +46,7 @@ Open WebUI подключён как git submodule в `vendor/open-webui`.
 ## Настройка pipeline в Open WebUI
 
 Файл pipeline расположен в:
-- `services/openwebui/pipelines/retriever_pipeline.py`
+- `deploy/services/openwebui/pipelines/retriever_pipeline.py`
 
 В админ-панели Open WebUI:
 1. Перейдите в `Admin Panel -> Pipelines`.
@@ -57,8 +57,8 @@ Open WebUI подключён как git submodule в `vendor/open-webui`.
 ## Интеграция с Langfuse
 
 - Запустите стек Langfuse отдельно:
-  - `docker compose -f infrastructure/langfuse/docker-compose.yml --env-file infrastructure/langfuse/.env up -d`
-- Включите переменные в `services/.env`:
+  - `docker compose -f deploy/infrastructure/langfuse/docker-compose.yml --env-file deploy/infrastructure/langfuse/.env up -d`
+- Включите переменные в `deploy/services/.env`:
   - `LANGFUSE_ENABLED=true`
   - `LANGFUSE_HOST=http://host.docker.internal:3001`
   - `LANGFUSE_PUBLIC_KEY=<key>`
@@ -67,6 +67,6 @@ Open WebUI подключён как git submodule в `vendor/open-webui`.
 ## Примечания
 
 - Логи по дизайну остаются на английском.
-- Таймаут retriever и лимиты контекста управляются переменными в `services/.env`.
+- Таймаут retriever и лимиты контекста управляются переменными в `deploy/services/.env`.
 - Cross-encoder reranking настраивается через переменные `RERANK_*` и включается `RERANK_ENABLED=true`.
 - Если retriever недоступен, pipeline автоматически переходит в fallback-режим без RAG-контекста.

@@ -1,7 +1,7 @@
 services:
   stage3-1-chunks-indexing:
     build:
-      context: ..
+      context: ../..
       dockerfile: stage3_1_chunks_indexing/Dockerfile
     container_name: stage3-1-chunks-indexing
     env_file:
@@ -24,7 +24,7 @@ services:
 
   stage3-2-chunks-vectorizing:
     build:
-      context: ..
+      context: ../..
       dockerfile: stage3_2_chunks_vectorizing/Dockerfile
     container_name: stage3-2-chunks-vectorizing
     env_file:
@@ -51,7 +51,7 @@ services:
 
   stage3-3-graph-knowledge-base:
     build:
-      context: ..
+      context: ../..
       dockerfile: stage3_3_graph_knowledge_base/Dockerfile
     container_name: stage3-3-graph-knowledge-base
     env_file:
@@ -78,7 +78,7 @@ services:
 
   stage7-3-retriever-api:
     build:
-      context: ..
+      context: ../..
       dockerfile: stage7_3_retriever_api/Dockerfile
     container_name: stage7-3-retriever-api
     env_file:
